@@ -115,4 +115,4 @@ MIT
 
 ## 关注我
 
-X(Twitter) 上分享 AI 工具和实用技术教程。
+X(Twitter): [@PardoCat0406](https://x.com/PardoCat0406) — 分享 AI 工具和实用技术教程。

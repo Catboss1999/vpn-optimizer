@@ -3,7 +3,7 @@
 # VPN Optimizer - 一键开启 BBR + 安装 Hysteria2
 # 适用于已安装 3x-ui 的 VPS，解决网络延迟高的问题
 # 兼容 Ubuntu 18.04+ / Debian 10+ / CentOS 7+
-# 作者: Pardo (@你的X账号)
+# 作者: Pardo (@PardoCat0406)
 # GitHub: https://github.com/Catboss1999/vpn-optimizer
 # ============================================================
 
@@ -518,4 +518,4 @@ echo -e "  • 如果延迟仍然高，可能是 VPS 到国内的线路问题（
 echo -e "  • 查看服务状态：systemctl status hysteria-server"
 echo -e "  • 配置文件：$CERT_DIR/config.yaml"
 echo ""
-echo -e "${GREEN}如果觉得有用，关注我的 X 获取更多 AI 工具和实用教程 🎯${PLAIN}"
+echo -e "${GREEN}如果觉得有用，关注我的 X @PardoCat0406 获取更多 AI 工具和实用教程 🎯${PLAIN}"
