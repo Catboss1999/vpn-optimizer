@@ -54,24 +54,37 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 0 步：检查并安装依赖工具${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-# 系统更新 + 安装依赖（新 VPS 拿到手直接跑，不需要手动 apt upgrade）
-info "正在更新系统包并安装依赖..."
+# ============================================================
+# 第 0 步：系统更新 + 安装依赖
+# ============================================================
+echo ""
+echo -e "${CYAN}========================================${PLAIN}"
+echo -e "${CYAN}  第 0 步：更新系统 + 安装依赖${PLAIN}"
+echo -e "${CYAN}========================================${PLAIN}"
+
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
 
 if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
-    apt-get update -y >/dev/null 2>&1
-    apt-get upgrade -y >/dev/null 2>&1
-    apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
+    info "执行 apt-get update..."
+    apt-get update -y
+    info "执行 apt-get upgrade（全自动，无需手动确认）..."
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
+    info "安装依赖 curl openssl ca-certificates..."
+    apt-get install -y curl openssl ca-certificates
 elif [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
-    yum update -y >/dev/null 2>&1
-    yum install -y curl openssl ca-certificates >/dev/null 2>&1
+    info "执行 yum update..."
+    yum update -y
+    info "安装依赖..."
+    yum install -y curl openssl ca-certificates
 else
     warn "未知系统类型 $OS，尝试用 apt 安装..."
-    apt-get update -y >/dev/null 2>&1
-    apt-get upgrade -y >/dev/null 2>&1
-    apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
+    apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
+    apt-get install -y curl openssl ca-certificates
 fi
 
+echo ""
 INSTALL_OK=1
 for cmd in curl openssl; do
     if ! command -v $cmd &> /dev/null; then
