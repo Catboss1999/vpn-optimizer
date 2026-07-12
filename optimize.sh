@@ -62,27 +62,15 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 0 步：更新系统 + 安装依赖${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-
-if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
-    info "执行 apt-get update..."
-    apt-get update -y
-    info "执行 apt-get upgrade（全自动，无需手动确认）..."
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
-    info "安装依赖 curl openssl ca-certificates..."
-    apt-get install -y curl openssl ca-certificates
-elif [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
-    info "执行 yum update..."
-    yum update -y
-    info "安装依赖..."
-    yum install -y curl openssl ca-certificates
-else
-    warn "未知系统类型 $OS，尝试用 apt 安装..."
-    apt-get update -y
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef"
-    apt-get install -y curl openssl ca-certificates
-fi
+echo ""
+echo -e "${YELLOW}>> apt-get update${PLAIN}"
+apt-get update
+echo ""
+echo -e "${YELLOW}>> apt-get upgrade -y${PLAIN}"
+apt-get upgrade -y
+echo ""
+echo -e "${YELLOW}>> apt-get install -y curl openssl ca-certificates${PLAIN}"
+apt-get install -y curl openssl ca-certificates
 
 echo ""
 INSTALL_OK=1
