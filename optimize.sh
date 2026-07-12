@@ -54,44 +54,38 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 0 步：检查并安装依赖工具${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-NEED_INSTALL=0
+# 系统更新 + 安装依赖（新 VPS 拿到手直接跑，不需要手动 apt upgrade）
+info "正在更新系统包并安装依赖..."
+export DEBIAN_FRONTEND=noninteractive
+
+if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
+    apt-get update -y >/dev/null 2>&1
+    apt-get upgrade -y >/dev/null 2>&1
+    apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
+elif [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
+    yum update -y >/dev/null 2>&1
+    yum install -y curl openssl ca-certificates >/dev/null 2>&1
+else
+    warn "未知系统类型 $OS，尝试用 apt 安装..."
+    apt-get update -y >/dev/null 2>&1
+    apt-get upgrade -y >/dev/null 2>&1
+    apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
+fi
+
+INSTALL_OK=1
 for cmd in curl openssl; do
     if ! command -v $cmd &> /dev/null; then
-        NEED_INSTALL=1
-        info "缺少工具：$cmd"
+        error "安装 $cmd 失败"
+        INSTALL_OK=0
     fi
 done
 
-if [[ $NEED_INSTALL -eq 1 ]]; then
-    info "正在自动安装缺失的依赖工具..."
-
-    if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -y >/dev/null 2>&1
-        apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
-    elif [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
-        yum install -y curl openssl ca-certificates >/dev/null 2>&1
-    else
-        warn "未知系统类型 $OS，尝试用 apt 安装..."
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -y >/dev/null 2>&1
-        apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
-    fi
-
-    INSTALL_OK=1
-    for cmd in curl openssl; do
-        if ! command -v $cmd &> /dev/null; then
-            error "安装 $cmd 失败"
-            INSTALL_OK=0
-        fi
-    done
-
-    if [[ $INSTALL_OK -eq 1 ]]; then
-        ok "依赖工具安装完成"
-    else
-        error "部分依赖工具安装失败，请手动安装后重试"
-        exit 1
-    fi
+if [[ $INSTALL_OK -eq 1 ]]; then
+    ok "系统更新完成，依赖工具就绪"
+else
+    error "部分依赖工具安装失败，请手动安装后重试"
+    exit 1
+fi
 else
     ok "依赖工具已就绪"
 fi
