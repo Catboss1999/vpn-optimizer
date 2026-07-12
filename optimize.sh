@@ -384,31 +384,57 @@ mkdir -p "$HY2_CONFIG_DIR"
 # 询问是否配置出口代理
 echo ""
 echo -e "${YELLOW}是否配置静态IP出口代理？${PLAIN}"
-echo -e "  如果你有购买的静态IP SOCKS5代理，所有流量将通过该代理出去"
+echo -e "  如果你有购买的静态IP代理，所有流量将通过该代理出去"
 echo -e "  目标网站看到的是你的静态IP，而不是VPS的IP"
 echo -e "  ${CYAN}y${PLAIN} = 配置出口代理    ${CYAN}n${PLAIN} = 直连（默认，直接用VPS IP出去）"
 read -p "请选择 [y/N]: " USE_OUTBOUND
 
+OUTBOUND_TYPE=""
 OUTBOUND_ADDR=""
 OUTBOUND_USER=""
 OUTBOUND_PASS=""
 
 if [[ "$USE_OUTBOUND" == "y" || "$USE_OUTBOUND" == "Y" ]]; then
     echo ""
-    read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
-    while [[ -z "$OUTBOUND_ADDR" ]]; do
-        warn "代理地址不能为空"
-        read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
-    done
+    echo -e "  代理类型："
+    echo -e "    ${CYAN}1${PLAIN} = HTTP 代理（大多数静态住宅IP服务商默认提供这个）"
+    echo -e "    ${CYAN}2${PLAIN} = SOCKS5 代理"
+    read -p "请选择 [1/2]（默认 1）: " PROXY_CHOICE
 
-    read -p "SOCKS5 用户名（无认证则留空回车）: " OUTBOUND_USER
-    if [[ -n "$OUTBOUND_USER" ]]; then
-        read -s -p "SOCKS5 密码: " OUTBOUND_PASS
+    if [[ "$PROXY_CHOICE" == "2" ]]; then
+        OUTBOUND_TYPE="socks5"
+        read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+        while [[ -z "$OUTBOUND_ADDR" ]]; do
+            warn "代理地址不能为空"
+            read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+        done
+        read -p "SOCKS5 用户名（无认证则留空回车）: " OUTBOUND_USER
+        if [[ -n "$OUTBOUND_USER" ]]; then
+            read -s -p "SOCKS5 密码: " OUTBOUND_PASS
+            echo ""
+        fi
+    else
+        OUTBOUND_TYPE="http"
+        read -p "HTTP 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+        while [[ -z "$OUTBOUND_ADDR" ]]; do
+            warn "代理地址不能为空"
+            read -p "HTTP 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+        done
+        read -p "HTTP 代理用户名: " OUTBOUND_USER
+        while [[ -z "$OUTBOUND_USER" ]]; do
+            warn "用户名不能为空"
+            read -p "HTTP 代理用户名: " OUTBOUND_USER
+        done
+        read -s -p "HTTP 代理密码: " OUTBOUND_PASS
         echo ""
     fi
 
     ok "出口代理配置已记录"
+    info "代理类型：$OUTBOUND_TYPE"
     info "代理地址：$OUTBOUND_ADDR"
+    if [[ "$OUTBOUND_TYPE" == "http" ]]; then
+        warn "注意：HTTP 代理不支持 UDP 转发，部分应用可能受影响"
+    fi
 else
     info "未配置出口代理，使用 VPS IP 直连"
 fi
@@ -442,13 +468,19 @@ if [[ -n "$OUTBOUND_ADDR" ]]; then
 # 出口代理（所有流量通过静态IP出去）
 outbounds:
   - name: static-ip
-    type: socks5
-    socks5:
-      addr: ${OUTBOUND_ADDR}
+    type: ${OUTBOUND_TYPE}
 OUTBOUND_EOF
-    if [[ -n "$OUTBOUND_USER" ]]; then
-        echo "      username: ${OUTBOUND_USER}" >> "$HY2_CONFIG_DIR/config.yaml"
-        echo "      password: ${OUTBOUND_PASS}" >> "$HY2_CONFIG_DIR/config.yaml"
+    if [[ "$OUTBOUND_TYPE" == "socks5" ]]; then
+        echo "    socks5:" >> "$HY2_CONFIG_DIR/config.yaml"
+        echo "      addr: ${OUTBOUND_ADDR}" >> "$HY2_CONFIG_DIR/config.yaml"
+        if [[ -n "$OUTBOUND_USER" ]]; then
+            echo "      username: ${OUTBOUND_USER}" >> "$HY2_CONFIG_DIR/config.yaml"
+            echo "      password: ${OUTBOUND_PASS}" >> "$HY2_CONFIG_DIR/config.yaml"
+        fi
+    else
+        # HTTP 代理：认证信息写在 URL 里
+        echo "    http:" >> "$HY2_CONFIG_DIR/config.yaml"
+        echo "      url: http://${OUTBOUND_USER}:${OUTBOUND_PASS}@${OUTBOUND_ADDR}" >> "$HY2_CONFIG_DIR/config.yaml"
     fi
 fi
 
@@ -562,7 +594,7 @@ echo -e "  密码：       ${CYAN}$HY2_PASSWORD${PLAIN}"
 echo -e "  SNI：        ${CYAN}www.bing.com${PLAIN}"
 if [[ -n "$OUTBOUND_ADDR" ]]; then
     OUTBOUND_IP=$(echo "$OUTBOUND_ADDR" | cut -d: -f1)
-    echo -e "  出口代理：   ${CYAN}$OUTBOUND_ADDR${PLAIN}"
+    echo -e "  出口代理：   ${CYAN}$OUTBOUND_TYPE://$OUTBOUND_ADDR${PLAIN}"
     if [[ -n "$OUTBOUND_USER" ]]; then
         echo -e "  代理认证：   ${CYAN}$OUTBOUND_USER${PLAIN}"
     fi
