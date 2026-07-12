@@ -386,6 +386,39 @@ echo -e "${CYAN}========================================${PLAIN}"
 HY2_CONFIG_DIR="/etc/hysteria"
 mkdir -p "$HY2_CONFIG_DIR"
 
+# 询问是否配置出口代理
+echo ""
+echo -e "${YELLOW}是否配置静态IP出口代理？${PLAIN}"
+echo -e "  如果你有购买的静态IP SOCKS5代理，所有流量将通过该代理出去"
+echo -e "  目标网站看到的是你的静态IP，而不是VPS的IP"
+echo -e "  ${CYAN}y${PLAIN} = 配置出口代理    ${CYAN}n${PLAIN} = 直连（默认，直接用VPS IP出去）"
+read -p "请选择 [y/N]: " USE_OUTBOUND
+
+OUTBOUND_ADDR=""
+OUTBOUND_USER=""
+OUTBOUND_PASS=""
+
+if [[ "$USE_OUTBOUND" == "y" || "$USE_OUTBOUND" == "Y" ]]; then
+    echo ""
+    read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+    while [[ -z "$OUTBOUND_ADDR" ]]; do
+        warn "代理地址不能为空"
+        read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+    done
+
+    read -p "SOCKS5 用户名（无认证则留空回车）: " OUTBOUND_USER
+    if [[ -n "$OUTBOUND_USER" ]]; then
+        read -s -p "SOCKS5 密码: " OUTBOUND_PASS
+        echo ""
+    fi
+
+    ok "出口代理配置已记录"
+    info "代理地址：$OUTBOUND_ADDR"
+else
+    info "未配置出口代理，使用 VPS IP 直连"
+fi
+
+# 生成基础配置
 cat > "$HY2_CONFIG_DIR/config.yaml" << HY2_CONFIG
 listen: :${HY2_PORT}
 
@@ -407,6 +440,22 @@ masquerade:
     rewriteHost: true
 
 HY2_CONFIG
+
+# 如果配置了出口代理，追加 outbounds
+if [[ -n "$OUTBOUND_ADDR" ]]; then
+    cat >> "$HY2_CONFIG_DIR/config.yaml" << OUTBOUND_EOF
+# 出口代理（所有流量通过静态IP出去）
+outbounds:
+  - name: static-ip
+    type: socks5
+    socks5:
+      addr: ${OUTBOUND_ADDR}
+OUTBOUND_EOF
+    if [[ -n "$OUTBOUND_USER" ]]; then
+        echo "      username: ${OUTBOUND_USER}" >> "$HY2_CONFIG_DIR/config.yaml"
+        echo "      password: ${OUTBOUND_PASS}" >> "$HY2_CONFIG_DIR/config.yaml"
+    fi
+fi
 
 ok "Hysteria2 配置文件已生成：$HY2_CONFIG_DIR/config.yaml"
 
@@ -517,6 +566,13 @@ echo -e "  服务器 IP：  ${CYAN}$SERVER_IP${PLAIN}"
 echo -e "  端口：       ${CYAN}$HY2_PORT (UDP)${PLAIN}"
 echo -e "  密码：       ${CYAN}$HY2_PASSWORD${PLAIN}"
 echo -e "  SNI：        ${CYAN}www.bing.com${PLAIN}"
+if [[ -n "$OUTBOUND_ADDR" ]]; then
+    echo -e "  出口代理：   ${CYAN}$OUTBOUND_ADDR${PLAIN}"
+    if [[ -n "$OUTBOUND_USER" ]]; then
+        echo -e "  代理认证：   ${CYAN}$OUTBOUND_USER${PLAIN}"
+    fi
+    echo -e "  ${GREEN}所有流量将通过静态IP出去，目标网站看到的是代理IP${PLAIN}"
+fi
 echo ""
 echo -e "${YELLOW}服务管理：${PLAIN}"
 echo -e "  查看状态：  ${CYAN}systemctl status hysteria-server${PLAIN}"
