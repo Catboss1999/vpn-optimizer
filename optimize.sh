@@ -276,17 +276,49 @@ if command -v hysteria &> /dev/null; then
         info "当前版本：$HY2_VERSION"
     fi
 else
-    info "正在安装 Hysteria2（使用官方安装脚本）..."
+    info "正在安装 Hysteria2..."
 
-    # 用官方安装脚本，自带多源回退和架构检测
-    curl -fsSL https://get.hy2.sh/ | bash -s -- >/dev/null 2>&1 || {
-        # 官方脚本失败时尝试备用方式
-        warn "官方安装脚本失败，尝试备用下载方式..."
+    # 先测试网络连通性
+    info "测试网络连通性..."
+    NET_OK=0
+    for TEST_URL in "https://get.hy2.sh/" "https://github.com" "https://raw.githubusercontent.com"; do
+        if curl -sI --connect-timeout 5 -o /dev/null "$TEST_URL" 2>/dev/null; then
+            ok "可达：$TEST_URL"
+            NET_OK=1
+            break
+        else
+            warn "不可达：$TEST_URL"
+        fi
+    done
 
-        # 备用源：jsdelivr CDN 镜像
+    if [[ $NET_OK -eq 0 ]]; then
+        error "所有下载源均不可达，可能是 VPS 网络或 DNS 问题"
+        info "诊断命令："
+        info "  1. curl -v https://get.hy2.sh/  （看具体错误）"
+        info "  2. nslookup get.hy2.sh          （测试 DNS）"
+        info "  3. ping -c 3 github.com         （测试连通性）"
+        exit 1
+    fi
+
+    # 方式 1：官方安装脚本
+    INSTALL_OK=0
+    if curl -sI --connect-timeout 5 -o /dev/null "https://get.hy2.sh/" 2>/dev/null; then
+        info "使用官方安装脚本..."
+        if curl -fsSL https://get.hy2.sh/ | bash -s -- 2>&1 | tail -5; then
+            if command -v hysteria &> /dev/null; then
+                INSTALL_OK=1
+                ok "官方脚本安装成功"
+            fi
+        fi
+    fi
+
+    # 方式 2：GitHub 直连下载二进制
+    if [[ $INSTALL_OK -eq 0 ]]; then
+        warn "官方脚本失败，尝试 GitHub 直连..."
         HY2_LATEST=$(curl -sL --connect-timeout 10 https://api.github.com/repos/apernet/hysteria/releases/latest 2>/dev/null | \
             sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -1)
         [[ -z "$HY2_LATEST" ]] && HY2_LATEST="v2.6.0"
+        info "目标版本：$HY2_LATEST"
 
         ARCH=$(uname -m)
         case $ARCH in
@@ -298,33 +330,53 @@ else
 
         HY2_TAR="hysteria-linux-${HY2_ARCH}.tar.gz"
 
-        # 尝试 GitHub 直连 + jsdelivr CDN 镜像
         for URL in \
             "https://github.com/apernet/hysteria/releases/download/${HY2_LATEST}/${HY2_TAR}" \
-            "https://cdn.jsdelivr.net/gh/apernet/hysteria@${HY2_LATEST}/${HY2_TAR}"; do
-            info "尝试下载：$URL"
+            "https://ghfast.top/https://github.com/apernet/hysteria/releases/download/${HY2_LATEST}/${HY2_TAR}" \
+            "https://mirror.ghproxy.com/https://github.com/apernet/hysteria/releases/download/${HY2_LATEST}/${HY2_TAR}"; do
+            info "尝试：$URL"
             cd /tmp
-            if curl -fsSL --connect-timeout 15 -o "$HY2_TAR" "$URL" 2>/dev/null; then
+            if curl -fsSL --connect-timeout 15 -o "$HY2_TAR" "$URL" 2>&1; then
                 tar -xzf "$HY2_TAR" 2>/dev/null
                 mv -f hysteria /usr/local/bin/hysteria 2>/dev/null
                 chmod +x /usr/local/bin/hysteria
                 rm -f "$HY2_TAR" 2>/dev/null
-                break
+                if command -v hysteria &> /dev/null; then
+                    INSTALL_OK=1
+                    ok "二进制下载安装成功"
+                    break
+                fi
             fi
         done
+    fi
 
-        if ! command -v hysteria &> /dev/null; then
-            error "Hysteria2 下载失败，所有源均不可用"
-            info "请手动安装：curl -fsSL https://get.hy2.sh/ | bash -s --"
-            exit 1
+    # 方式 3：Go 安装（最后手段）
+    if [[ $INSTALL_OK -eq 0 ]]; then
+        warn "二进制下载失败，尝试 Go 编译安装..."
+        if ! command -v go &> /dev/null; then
+            info "安装 Go 编译环境..."
+            if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get install -y golang >/dev/null 2>&1
+            else
+                yum install -y golang >/dev/null 2>&1
+            fi
         fi
-    }
+        if command -v go &> /dev/null; then
+            GOPROXY=https://goproxy.cn,direct go install github.com/apernet/hysteria/v2@latest 2>/dev/null
+            cp ~/go/bin/hysteria /usr/local/bin/hysteria 2>/dev/null || true
+            if command -v hysteria &> /dev/null; then
+                INSTALL_OK=1
+                ok "Go 编译安装成功"
+            fi
+        fi
+    fi
 
-    if command -v hysteria &> /dev/null; then
-        ok "Hysteria2 安装完成"
-    else
-        error "Hysteria2 安装失败"
-        info "请手动安装：curl -fsSL https://get.hy2.sh/ | bash -s --"
+    if [[ $INSTALL_OK -eq 0 ]]; then
+        error "所有安装方式均失败"
+        info "请手动安装："
+        info "  curl -fsSL https://get.hy2.sh/ | bash -s --"
+        info "  或从 https://github.com/apernet/hysteria/releases 手动下载"
         exit 1
     fi
 fi
