@@ -1,9 +1,7 @@
 #!/bin/bash
 # ============================================================
-# VPN Optimizer - 一键开启 BBR + 生成 Hysteria2 配置
-# 适用于已安装 3x-ui 的 VPS，解决网络延迟高的问题
-# 脚本完成基础环境配置（BBR/证书/防火墙），
-# Hysteria2 入站通过 3x-ui 面板手动添加（脚本会给出详细教程）
+# VPN Optimizer - 一键开启 BBR + 安装 Hysteria2
+# 适用于任意 VPS，无需域名，解决网络延迟高的问题
 # 兼容 Ubuntu 18.04+ / Debian 10+ / CentOS 7+
 # GitHub: https://github.com/Catboss1999/vpn-optimizer
 # ============================================================
@@ -27,19 +25,16 @@ error() { echo -e "${RED}[ERROR]${PLAIN} $1"; }
 # 前置检查
 # ============================================================
 
-# 强制用 bash 运行（脚本用了 bash 特有语法）
 if [ -z "$BASH_VERSION" ]; then
     echo "[ERROR] 请用 bash 运行此脚本：bash optimize.sh"
     exit 1
 fi
 
-# 检查 root 权限
 if [[ $EUID -ne 0 ]]; then
     error "请用 root 用户运行此脚本：sudo bash optimize.sh"
     exit 1
 fi
 
-# 检测系统
 if [[ -f /etc/os-release ]]; then
     . /etc/os-release
     OS=$ID
@@ -59,7 +54,6 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 0 步：检查并安装依赖工具${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-# 只需要 curl 和 openssl（不再需要 sqlite3/jq）
 NEED_INSTALL=0
 for cmd in curl openssl; do
     if ! command -v $cmd &> /dev/null; then
@@ -84,7 +78,6 @@ if [[ $NEED_INSTALL -eq 1 ]]; then
         apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
     fi
 
-    # 验证安装结果
     INSTALL_OK=1
     for cmd in curl openssl; do
         if ! command -v $cmd &> /dev/null; then
@@ -111,7 +104,6 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 1 步：检查内核版本并开启 BBR${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-# 检查内核版本（BBR 需要 4.9+）
 KERNEL_VERSION=$(uname -r | cut -d. -f1-2)
 KERNEL_MAJOR=$(echo $KERNEL_VERSION | cut -d. -f1)
 KERNEL_MINOR=$(echo $KERNEL_VERSION | cut -d. -f2)
@@ -217,110 +209,11 @@ else
 fi
 
 # ============================================================
-# 第 2 步：检查 3x-ui 面板状态
+# 第 2 步：生成自签证书（无需域名）
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
-echo -e "${CYAN}  第 2 步：检查 3x-ui 面板状态${PLAIN}"
-echo -e "${CYAN}========================================${PLAIN}"
-
-# 检查 3x-ui 是否已安装
-if ! command -v x-ui &> /dev/null; then
-    error "未检测到 3x-ui 面板，请先安装 3x-ui"
-    info "安装命令：bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)"
-    exit 1
-fi
-
-ok "3x-ui 面板已安装"
-
-# 检查 3x-ui 服务状态
-if ! systemctl is-active --quiet x-ui 2>/dev/null; then
-    warn "3x-ui 服务未运行，正在启动..."
-    systemctl start x-ui 2>/dev/null
-    sleep 2
-    if systemctl is-active --quiet x-ui; then
-        ok "3x-ui 服务已启动"
-    else
-        error "3x-ui 服务启动失败，请手动检查：systemctl status x-ui"
-        exit 1
-    fi
-else
-    ok "3x-ui 服务运行中"
-fi
-
-# 读取面板配置（多种方式，确保读到正确值）
-info "正在读取 3x-ui 面板配置..."
-PANEL_INFO=$(x-ui setting -show true 2>&1 || echo "")
-
-# --- 读取面板端口 ---
-# 方式 1：从 x-ui setting 输出解析（用 sed 代替 grep -P，兼容性更好）
-PANEL_PORT=$(echo "$PANEL_INFO" | sed -n 's/^port:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
-
-# 方式 2：从监听端口检测 x-ui 进程
-if [[ -z "$PANEL_PORT" ]]; then
-    PANEL_PORT=$(ss -tlnp 2>/dev/null | grep -i 'x-ui' | head -1 | grep -o ':[0-9]\+' | head -1 | tr -d ':')
-fi
-
-# 方式 3：从数据库读取（如果 sqlite3 可用）
-if [[ -z "$PANEL_PORT" ]] && command -v sqlite3 &> /dev/null && [[ -f /etc/x-ui/x-ui.db ]]; then
-    PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webPort';" 2>/dev/null | head -1)
-fi
-
-if [[ -n "$PANEL_PORT" ]]; then
-    ok "面板端口：$PANEL_PORT"
-else
-    PANEL_PORT=2053
-    warn "未能自动读取面板端口，使用默认值：$PANEL_PORT"
-fi
-
-# --- 读取面板路径 ---
-PANEL_PATH=$(echo "$PANEL_INFO" | sed -n 's/^webBasePath:[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1)
-if [[ -z "$PANEL_PATH" ]]; then
-    # 从数据库读取
-    if command -v sqlite3 &> /dev/null && [[ -f /etc/x-ui/x-ui.db ]]; then
-        PANEL_PATH=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webBasePath';" 2>/dev/null | head -1)
-    fi
-fi
-if [[ -z "$PANEL_PATH" ]]; then
-    PANEL_PATH="/"
-fi
-
-[[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
-[[ "$PANEL_PATH" != */ ]] && PANEL_PATH="$PANEL_PATH/"
-
-# --- 判断面板是否使用 HTTPS ---
-# x-ui setting 输出中有 "Panel is secure with SSL" 或 "not secure with SSL"
-if echo "$PANEL_INFO" | grep -q "secure with SSL" && ! echo "$PANEL_INFO" | grep -q "not secure"; then
-    PANEL_SCHEME="https"
-else
-    PANEL_SCHEME="http"
-fi
-
-# --- 检查 3x-ui 版本 ---
-info "正在检查 3x-ui 版本..."
-XUI_VERSION=$(x-ui version 2>&1 | head -1 | sed -n 's/.*\(v\?[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
-
-if [[ -n "$XUI_VERSION" ]]; then
-    info "3x-ui 版本：$XUI_VERSION"
-    XUI_MAJOR=$(echo "$XUI_VERSION" | sed 's/v//' | cut -d. -f1)
-    XUI_MINOR=$(echo "$XUI_VERSION" | sed 's/v//' | cut -d. -f2)
-    if [[ $XUI_MAJOR -lt 2 ]] || [[ $XUI_MAJOR -eq 2 && $XUI_MINOR -lt 9 ]]; then
-        warn "3x-ui 版本 $XUI_VERSION 不支持 Hysteria2（需要 v2.9.0+）"
-        warn "请先升级 3x-ui：x-ui update"
-        exit 1
-    else
-        ok "3x-ui 版本支持 Hysteria2"
-    fi
-else
-    warn "无法读取 3x-ui 版本，如果面板中没有 hysteria 协议选项，请升级：x-ui update"
-fi
-
-# ============================================================
-# 第 3 步：生成自签证书（无需域名）
-# ============================================================
-echo ""
-echo -e "${CYAN}========================================${PLAIN}"
-echo -e "${CYAN}  第 3 步：生成自签证书${PLAIN}"
+echo -e "${CYAN}  第 2 步：生成自签证书${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
 CERT_DIR="/root/cert"
@@ -343,27 +236,23 @@ info "证书路径：$CERT_DIR/hy2_server.crt"
 info "密钥路径：$CERT_DIR/hy2_server.key"
 
 # ============================================================
-# 第 4 步：生成随机密码和端口
+# 第 3 步：生成随机密码和端口
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
-echo -e "${CYAN}  第 4 步：生成配置${PLAIN}"
+echo -e "${CYAN}  第 3 步：生成配置${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
 # 生成随机密码
 HY2_PASSWORD=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
 
-# 检测已监听的端口，避免冲突（用 ss 代替 sqlite3，不再依赖数据库）
-USED_PORTS="$PANEL_PORT"
+# 检测已监听的端口，避免冲突
 LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -o ':[0-9]\+' | tr -d ':' | sort -u | tr '\n' ' ')
-if [[ -n "$LISTENING_PORTS" ]]; then
-    USED_PORTS="$USED_PORTS $LISTENING_PORTS"
-fi
 
 # 生成随机端口，避开所有已用端口
 while true; do
     HY2_PORT=$(shuf -i 20000-50000 -n 1)
-    if ! echo "$USED_PORTS" | grep -qw "$HY2_PORT"; then
+    if ! echo "$LISTENING_PORTS" | grep -qw "$HY2_PORT"; then
         break
     fi
 done
@@ -372,11 +261,159 @@ info "生成随机密码：$HY2_PASSWORD"
 info "生成随机端口：$HY2_PORT"
 
 # ============================================================
-# 第 5 步：开放防火墙端口
+# 第 4 步：安装 Hysteria2
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
-echo -e "${CYAN}  第 5 步：开放防火墙端口${PLAIN}"
+echo -e "${CYAN}  第 4 步：安装 Hysteria2${PLAIN}"
+echo -e "${CYAN}========================================${PLAIN}"
+
+# 检查是否已安装
+if command -v hysteria &> /dev/null; then
+    ok "Hysteria2 已安装"
+    HY2_VERSION=$(hysteria version 2>/dev/null | head -1 | grep -o 'v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' || echo "")
+    if [[ -n "$HY2_VERSION" ]]; then
+        info "当前版本：$HY2_VERSION"
+    fi
+else
+    info "正在安装 Hysteria2..."
+
+    # 获取最新版本
+    HY2_LATEST=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest 2>/dev/null | \
+        sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -1)
+
+    if [[ -z "$HY2_LATEST" ]]; then
+        HY2_LATEST="v2.6.0"
+        warn "无法获取最新版本，使用默认版本 $HY2_LATEST"
+    fi
+
+    HY2_VERSION="${HY2_LATEST#v}"
+    info "下载版本：$HY2_LATEST"
+
+    # 下载并安装
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64)  HY2_ARCH="amd64" ;;
+        aarch64) HY2_ARCH="arm64" ;;
+        armv7l)  HY2_ARCH="armv7" ;;
+        *)       HY2_ARCH="amd64" ;;
+    esac
+
+    HY2_TAR="hysteria-linux-${HY2_ARCH}.tar.gz"
+    HY2_URL="https://github.com/apernet/hysteria/releases/download/${HY2_LATEST}/${HY2_TAR}"
+
+    cd /tmp
+    curl -fsSL -o "$HY2_TAR" "$HY2_URL" 2>/dev/null || {
+        error "下载 Hysteria2 失败，请检查网络"
+        exit 1
+    }
+
+    tar -xzf "$HY2_TAR" 2>/dev/null
+    mv -f hysteria /usr/local/bin/hysteria 2>/dev/null
+    chmod +x /usr/local/bin/hysteria
+    rm -f "$HY2_TAR" 2>/dev/null
+
+    if command -v hysteria &> /dev/null; then
+        ok "Hysteria2 安装完成"
+    else
+        error "Hysteria2 安装失败"
+        exit 1
+    fi
+fi
+
+# ============================================================
+# 第 5 步：生成 Hysteria2 配置文件
+# ============================================================
+echo ""
+echo -e "${CYAN}========================================${PLAIN}"
+echo -e "${CYAN}  第 5 步：生成 Hysteria2 配置${PLAIN}"
+echo -e "${CYAN}========================================${PLAIN}"
+
+HY2_CONFIG_DIR="/etc/hysteria"
+mkdir -p "$HY2_CONFIG_DIR"
+
+cat > "$HY2_CONFIG_DIR/config.yaml" << HY2_CONFIG
+listen: :${HY2_PORT}
+
+# 使用自签证书
+tls:
+  cert: ${CERT_DIR}/hy2_server.crt
+  key: ${CERT_DIR}/hy2_server.key
+  sniGuard: www.bing.com
+
+# 认证
+auth:
+  type: password
+  password: ${HY2_PASSWORD}
+
+# 传输层设置
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 16777216
+  maxConnReceiveWindow: 16777216
+  maxIdleTimeout: 30s
+  keepAlivePeriod: 10s
+  disablePathMTUDiscovery: false
+
+# 允许不安全连接（用于自签证书）
+masquerade:
+  type: string
+  string: "Hello World"
+  listenHTTPS: :${HY2_PORT}
+
+HY2_CONFIG
+
+ok "Hysteria2 配置文件已生成：$HY2_CONFIG_DIR/config.yaml"
+
+# ============================================================
+# 第 6 步：创建 systemd 服务
+# ============================================================
+echo ""
+echo -e "${CYAN}========================================${PLAIN}"
+echo -e "${CYAN}  第 6 步：创建 systemd 服务${PLAIN}"
+echo -e "${CYAN}========================================${PLAIN}"
+
+cat > /etc/systemd/system/hysteria-server.service << SYSTEMD_EOF
+[Unit]
+Description=Hysteria2 Server Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD_EOF
+
+systemctl daemon-reload
+systemctl enable hysteria-server.service
+systemctl start hysteria-server.service
+sleep 2
+
+if systemctl is-active --quiet hysteria-server.service; then
+    ok "Hysteria2 服务已启动并设为开机自启"
+else
+    warn "Hysteria2 服务启动失败，尝试手动启动..."
+    systemctl restart hysteria-server.service
+    sleep 2
+    if systemctl is-active --quiet hysteria-server.service; then
+        ok "Hysteria2 服务已启动"
+    else
+        error "Hysteria2 服务启动失败，请检查日志：journalctl -u hysteria-server -n 50"
+        exit 1
+    fi
+fi
+
+# ============================================================
+# 第 7 步：开放防火墙端口
+# ============================================================
+echo ""
+echo -e "${CYAN}========================================${PLAIN}"
+echo -e "${CYAN}  第 7 步：开放防火墙端口${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
 if command -v ufw &> /dev/null; then
@@ -397,63 +434,49 @@ ok "iptables 已放行 UDP $HY2_PORT"
 warn "如果你的 VPS 服务商有网页端安全组/防火墙设置，请在那里也放行 UDP $HY2_PORT 端口"
 
 # ============================================================
-# 第 6 步：输出 3x-ui 面板操作教程
+# 完成：输出配置信息
 # ============================================================
 echo ""
 echo -e "${GREEN}========================================${PLAIN}"
-echo -e "${GREEN}  环境配置完成！${PLAIN}"
-echo -e "${GREEN}  以下操作请在 3x-ui 面板中完成${PLAIN}"
+echo -e "${GREEN}  配置完成！${PLAIN}"
 echo -e "${GREEN}========================================${PLAIN}"
 echo ""
 
 # 获取服务器公网 IP
 SERVER_IP=$(curl -s4 ifconfig.me 2>/dev/null || curl -s4 ip.sb 2>/dev/null || echo "你的服务器IP")
 
-# 面板地址
-PANEL_ADDR="${PANEL_SCHEME}://${SERVER_IP}:${PANEL_PORT}${PANEL_PATH}"
+# 一键导入链接
+HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=www.bing.com#Hysteria2-BBR"
 
-echo -e "${YELLOW}请在 3x-ui 面板中添加 Hysteria2 入站：${PLAIN}"
-echo ""
-echo -e "  ${GREEN}1.${PLAIN} 打开面板：${CYAN}${PANEL_ADDR}${PLAIN}"
-echo ""
-echo -e "  ${GREEN}2.${PLAIN} 左侧菜单点「入站列表」，再点右上角「添加入站」"
-echo ""
-echo -e "  ${GREEN}3.${PLAIN} 填写基本信息："
-echo -e "     ${CYAN}备注${PLAIN}      Hysteria2-BBR"
-echo -e "     ${CYAN}协议${PLAIN}      hysteria"
-echo -e "     ${CYAN}端口${PLAIN}      ${HY2_PORT}"
-echo ""
-echo -e "  ${GREEN}4.${PLAIN} 客户端设置："
-echo -e "     ${CYAN}密码${PLAIN}      ${HY2_PASSWORD}"
-echo -e "     （在 auth/password 字段填入上面这串密码）"
-echo ""
-echo -e "  ${GREEN}5.${PLAIN} 传输设置："
-echo -e "     ${CYAN}版本${PLAIN}      2"
-echo ""
-echo -e "  ${GREEN}6.${PLAIN} TLS 设置（安全选 tls）："
-echo -e "     ${CYAN}SNI${PLAIN}       www.bing.com"
-echo -e "     ${CYAN}证书路径${PLAIN}  ${CERT_DIR}/hy2_server.crt"
-echo -e "     ${CYAN}密钥路径${PLAIN}  ${CERT_DIR}/hy2_server.key"
-echo -e "     ${CYAN}ALPN${PLAIN}      h3"
-echo -e "     ${CYAN}允许不安全${PLAIN} 勾选"
-echo ""
-echo -e "  ${GREEN}7.${PLAIN} 点「添加」保存"
-echo ""
-echo -e "  ${GREEN}8.${PLAIN} 添加完成后，在入站列表点该节点的二维码图标"
-echo -e "     可以扫码导入客户端，也可以复制分享链接"
-echo ""
-
-# 预生成的分享链接（和面板生成的等效，方便用户直接复制）
-HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-BBR"
-
-echo -e "${YELLOW}一键导入链接（和面板生成的等效，复制到客户端即可）：${PLAIN}"
+echo -e "${YELLOW}一键导入链接（复制到客户端即可）：${PLAIN}"
 echo ""
 echo -e "  ${CYAN}${HY2_LINK}${PLAIN}"
 echo ""
 
-# Clash 配置片段
-echo -e "${YELLOW}Clash Meta 配置片段（直接复制）：${PLAIN}"
+echo -e "${YELLOW}客户端配置说明：${PLAIN}"
 echo ""
+echo -e "  ${GREEN}Shadowrocket (iOS)：${PLAIN}"
+echo -e "    1. 打开 Shadowrocket → 右上角 + → 类型选 Hysteria2"
+echo -e "    2. 服务器填：${CYAN}$SERVER_IP${PLAIN}"
+echo -e "    3. 端口填：${CYAN}$HY2_PORT${PLAIN}"
+echo -e "    4. 密码填：${CYAN}$HY2_PASSWORD${PLAIN}"
+echo -e "    5. SNI 填：${CYAN}www.bing.com${PLAIN}"
+echo -e "    6. 允许不安全 勾选"
+echo -e "    7. 保存 → 连接"
+echo ""
+echo -e "  ${GREEN}v2rayN / Nekoray (Windows)：${PLAIN}"
+echo -e "    1. 服务器 → 添加自定义服务器 → 协议选 Hysteria2"
+echo -e "    2. 地址填：${CYAN}$SERVER_IP${PLAIN}"
+echo -e "    3. 端口填：${CYAN}$HY2_PORT${PLAIN}"
+echo -e "    4. 密码填：${CYAN}$HY2_PASSWORD${PLAIN}"
+echo -e "    5. SNI 填：${CYAN}www.bing.com${PLAIN}"
+echo -e "    6. 允许不安全 勾选"
+echo -e "    7. 保存 → 连接"
+echo ""
+echo -e "  ${GREEN}Clash Meta (Mac/Windows/Linux)：${PLAIN}"
+echo -e "    直接复制下面配置片段到配置文件："
+echo ""
+
 cat << CLASH_EOF
   - name: "Hysteria2-BBR"
     type: hysteria2
@@ -462,23 +485,25 @@ cat << CLASH_EOF
     password: $HY2_PASSWORD
     sni: www.bing.com
     skip-cert-verify: true
-    alpn:
-      - h3
 
 CLASH_EOF
 
-# 配置摘要
-echo -e "${YELLOW}配置摘要（供记录）：${PLAIN}"
+echo -e "${YELLOW}配置摘要：${PLAIN}"
 echo -e "  服务器 IP：  ${CYAN}$SERVER_IP${PLAIN}"
 echo -e "  端口：       ${CYAN}$HY2_PORT (UDP)${PLAIN}"
 echo -e "  密码：       ${CYAN}$HY2_PASSWORD${PLAIN}"
 echo -e "  SNI：        ${CYAN}www.bing.com${PLAIN}"
 echo -e "  证书：       ${CYAN}${CERT_DIR}/hy2_server.crt${PLAIN}"
 echo -e "  密钥：       ${CYAN}${CERT_DIR}/hy2_server.key${PLAIN}"
-echo -e "  面板地址：   ${CYAN}${PANEL_ADDR}${PLAIN}"
+echo ""
+echo -e "${YELLOW}服务管理：${PLAIN}"
+echo -e "  查看状态：  ${CYAN}systemctl status hysteria-server${PLAIN}"
+echo -e "  查看日志：  ${CYAN}journalctl -u hysteria-server -f${PLAIN}"
+echo -e "  重启服务：  ${CYAN}systemctl restart hysteria-server${PLAIN}"
+echo -e "  停止服务：  ${CYAN}systemctl stop hysteria-server${PLAIN}"
 echo ""
 echo -e "${YELLOW}提示：${PLAIN}"
-echo -e "  - 原来的 VLESS+Reality 节点仍然可用，两个协议互不干扰"
-echo -e "  - 如果延迟仍然高，可能是 VPS 到国内的线路问题（换 CN2 GIA 线路可解决）"
-echo -e "  - 如果面板中没有 hysteria 协议选项，说明 3x-ui 版本太旧，运行 x-ui update 升级"
+echo -e "  - 原来的 3x-ui 节点（VLESS+Reality 等）仍然可用，两个协议互不干扰"
+echo -e "  - Hysteria2 使用 UDP 协议，如果延迟仍然高，可能是 VPS 到国内的线路问题"
+echo -e "  - 需要 CN2 GIA 等优质线路才能从根本上降低延迟"
 echo ""
