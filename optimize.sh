@@ -232,22 +232,46 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 3 步：生成配置${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-# 生成随机密码
-HY2_PASSWORD=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
-
-# 检测已监听的端口，避免冲突
-LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -o ':[0-9]\+' | tr -d ':' | sort -u | tr '\n' ' ')
-
-# 生成随机端口，避开所有已用端口
-while true; do
-    HY2_PORT=$(shuf -i 20000-50000 -n 1)
-    if ! echo "$LISTENING_PORTS" | grep -qw "$HY2_PORT"; then
-        break
+# 检测已有配置，复用端口和密码（避免重复部署时端口变更导致安全组不通）
+EXISTING_CONFIG="/etc/hysteria/config.yaml"
+if [[ -f "$EXISTING_CONFIG" ]]; then
+    EXISTING_PORT=$(grep '^listen:' "$EXISTING_CONFIG" | grep -o '[0-9]\+' | head -1)
+    EXISTING_PASS=$(grep '  password:' "$EXISTING_CONFIG" | sed 's/.*password: *//' | tr -d ' ')
+    if [[ -n "$EXISTING_PORT" && -n "$EXISTING_PASS" ]]; then
+        HY2_PORT="$EXISTING_PORT"
+        HY2_PASSWORD="$EXISTING_PASS"
+        info "检测到已有配置，复用端口：$HY2_PORT 密码：$HY2_PASSWORD"
+    else
+        HY2_PASSWORD=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
+        # 检测已监听的端口，避免冲突
+        LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -o ':[0-9]\+' | tr -d ':' | sort -u | tr '\n' ' ')
+        while true; do
+            HY2_PORT=$(shuf -i 20000-50000 -n 1)
+            if ! echo "$LISTENING_PORTS" | grep -qw "$HY2_PORT"; then
+                break
+            fi
+        done
+        info "生成随机密码：$HY2_PASSWORD"
+        info "生成随机端口：$HY2_PORT"
     fi
-done
+else
+    # 生成随机密码
+    HY2_PASSWORD=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
 
-info "生成随机密码：$HY2_PASSWORD"
-info "生成随机端口：$HY2_PORT"
+    # 检测已监听的端口，避免冲突
+    LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -o ':[0-9]\+' | tr -d ':' | sort -u | tr '\n' ' ')
+
+    # 生成随机端口，避开所有已用端口
+    while true; do
+        HY2_PORT=$(shuf -i 20000-50000 -n 1)
+        if ! echo "$LISTENING_PORTS" | grep -qw "$HY2_PORT"; then
+            break
+        fi
+    done
+
+    info "生成随机密码：$HY2_PASSWORD"
+    info "生成随机端口：$HY2_PORT"
+fi
 
 # ============================================================
 # 第 4 步：安装 Hysteria2
@@ -512,7 +536,7 @@ SYSTEMD_EOF
 
 systemctl daemon-reload
 systemctl enable hysteria-server.service
-systemctl start hysteria-server.service
+systemctl restart hysteria-server.service
 sleep 2
 
 if systemctl is-active --quiet hysteria-server.service; then
