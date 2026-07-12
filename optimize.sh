@@ -21,9 +21,10 @@ ok()    { echo -e "${GREEN}[OK]${PLAIN} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
 error() { echo -e "${RED}[ERROR]${PLAIN} $1"; }
 
-# 脚本下载地址（用 commit hash 避免 CDN 缓存旧版）
-SCRIPT_CDN_URL="https://cdn.jsdelivr.net/gh/Catboss1999/vpn-optimizer@4335f9b/optimize.sh"
-SCRIPT_RAW_URL="https://raw.githubusercontent.com/Catboss1999/vpn-optimizer/4335f9b/optimize.sh"
+# 保存脚本到本地（用于内核升级后重启续跑，不依赖 CDN）
+SCRIPT_LOCAL="/root/optimize.sh"
+curl -fsSL "https://cdn.jsdelivr.net/gh/Catboss1999/vpn-optimizer/main/optimize.sh" -o "$SCRIPT_LOCAL" 2>/dev/null || true
+chmod +x "$SCRIPT_LOCAL" 2>/dev/null || true
 
 # ============================================================
 # 前置检查
@@ -116,7 +117,7 @@ if [[ $NEED_KERNEL_UPGRADE -eq 1 ]]; then
         cat > /etc/cron.d/vpn-optimizer-autorun << CRON_EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-@reboot root sleep 30 && bash <(curl -fsSL ${SCRIPT_CDN_URL} || curl -fsSL ${SCRIPT_RAW_URL}) >> /var/log/vpn-optimizer.log 2>&1
+@reboot root sleep 30 && bash /root/optimize.sh >> /var/log/vpn-optimizer.log 2>&1
 CRON_EOF
 
         ok "已设置重启后自动继续运行脚本"
@@ -135,7 +136,7 @@ CRON_EOF
             cat > /etc/cron.d/vpn-optimizer-autorun << CRON_EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-@reboot root sleep 30 && bash <(curl -fsSL ${SCRIPT_CDN_URL} || curl -fsSL ${SCRIPT_RAW_URL}) >> /var/log/vpn-optimizer.log 2>&1
+@reboot root sleep 30 && bash /root/optimize.sh >> /var/log/vpn-optimizer.log 2>&1
 CRON_EOF
 
             ok "已设置重启后自动继续运行脚本"
