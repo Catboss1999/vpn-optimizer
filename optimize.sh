@@ -276,47 +276,55 @@ if command -v hysteria &> /dev/null; then
         info "当前版本：$HY2_VERSION"
     fi
 else
-    info "正在安装 Hysteria2..."
+    info "正在安装 Hysteria2（使用官方安装脚本）..."
 
-    # 获取最新版本
-    HY2_LATEST=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest 2>/dev/null | \
-        sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -1)
+    # 用官方安装脚本，自带多源回退和架构检测
+    curl -fsSL https://get.hy2.sh/ | bash -s -- >/dev/null 2>&1 || {
+        # 官方脚本失败时尝试备用方式
+        warn "官方安装脚本失败，尝试备用下载方式..."
 
-    if [[ -z "$HY2_LATEST" ]]; then
-        HY2_LATEST="v2.6.0"
-        warn "无法获取最新版本，使用默认版本 $HY2_LATEST"
-    fi
+        # 备用源：jsdelivr CDN 镜像
+        HY2_LATEST=$(curl -sL --connect-timeout 10 https://api.github.com/repos/apernet/hysteria/releases/latest 2>/dev/null | \
+            sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -1)
+        [[ -z "$HY2_LATEST" ]] && HY2_LATEST="v2.6.0"
 
-    HY2_VERSION="${HY2_LATEST#v}"
-    info "下载版本：$HY2_LATEST"
+        ARCH=$(uname -m)
+        case $ARCH in
+            x86_64)  HY2_ARCH="amd64" ;;
+            aarch64) HY2_ARCH="arm64" ;;
+            armv7l)  HY2_ARCH="armv7" ;;
+            *)       HY2_ARCH="amd64" ;;
+        esac
 
-    # 下载并安装
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64)  HY2_ARCH="amd64" ;;
-        aarch64) HY2_ARCH="arm64" ;;
-        armv7l)  HY2_ARCH="armv7" ;;
-        *)       HY2_ARCH="amd64" ;;
-    esac
+        HY2_TAR="hysteria-linux-${HY2_ARCH}.tar.gz"
 
-    HY2_TAR="hysteria-linux-${HY2_ARCH}.tar.gz"
-    HY2_URL="https://github.com/apernet/hysteria/releases/download/${HY2_LATEST}/${HY2_TAR}"
+        # 尝试 GitHub 直连 + jsdelivr CDN 镜像
+        for URL in \
+            "https://github.com/apernet/hysteria/releases/download/${HY2_LATEST}/${HY2_TAR}" \
+            "https://cdn.jsdelivr.net/gh/apernet/hysteria@${HY2_LATEST}/${HY2_TAR}"; do
+            info "尝试下载：$URL"
+            cd /tmp
+            if curl -fsSL --connect-timeout 15 -o "$HY2_TAR" "$URL" 2>/dev/null; then
+                tar -xzf "$HY2_TAR" 2>/dev/null
+                mv -f hysteria /usr/local/bin/hysteria 2>/dev/null
+                chmod +x /usr/local/bin/hysteria
+                rm -f "$HY2_TAR" 2>/dev/null
+                break
+            fi
+        done
 
-    cd /tmp
-    curl -fsSL -o "$HY2_TAR" "$HY2_URL" 2>/dev/null || {
-        error "下载 Hysteria2 失败，请检查网络"
-        exit 1
+        if ! command -v hysteria &> /dev/null; then
+            error "Hysteria2 下载失败，所有源均不可用"
+            info "请手动安装：curl -fsSL https://get.hy2.sh/ | bash -s --"
+            exit 1
+        fi
     }
-
-    tar -xzf "$HY2_TAR" 2>/dev/null
-    mv -f hysteria /usr/local/bin/hysteria 2>/dev/null
-    chmod +x /usr/local/bin/hysteria
-    rm -f "$HY2_TAR" 2>/dev/null
 
     if command -v hysteria &> /dev/null; then
         ok "Hysteria2 安装完成"
     else
         error "Hysteria2 安装失败"
+        info "请手动安装：curl -fsSL https://get.hy2.sh/ | bash -s --"
         exit 1
     fi
 fi
@@ -339,28 +347,18 @@ listen: :${HY2_PORT}
 tls:
   cert: ${CERT_DIR}/hy2_server.crt
   key: ${CERT_DIR}/hy2_server.key
-  sniGuard: www.bing.com
 
 # 认证
 auth:
   type: password
   password: ${HY2_PASSWORD}
 
-# 传输层设置
-quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 16777216
-  maxConnReceiveWindow: 16777216
-  maxIdleTimeout: 30s
-  keepAlivePeriod: 10s
-  disablePathMTUDiscovery: false
-
-# 允许不安全连接（用于自签证书）
+# 伪装策略（当非 Hysteria2 客户端探测时返回正常网页）
 masquerade:
-  type: string
-  string: "Hello World"
-  listenHTTPS: :${HY2_PORT}
+  type: proxy
+  proxy:
+    url: https://www.bing.com
+    rewriteHost: true
 
 HY2_CONFIG
 
@@ -374,7 +372,8 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 6 步：创建 systemd 服务${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-cat > /etc/systemd/system/hysteria-server.service << SYSTEMD_EOF
+# 官方安装脚本可能已创建 systemd 服务，这里确保配置正确
+cat > /etc/systemd/system/hysteria-server.service << 'SYSTEMD_EOF'
 [Unit]
 Description=Hysteria2 Server Service
 After=network.target
