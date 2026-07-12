@@ -2,7 +2,7 @@
 # ============================================================
 # VPN Optimizer - 一键开启 BBR + 安装 Hysteria2
 # 适用于已安装 3x-ui 的 VPS，解决网络延迟高的问题
-# 兼容 Ubuntu 20.04 / Debian 11+ / CentOS 7+
+# 兼容 Ubuntu 18.04+ / Debian 10+ / CentOS 7+
 # 作者: Pardo (@你的X账号)
 # GitHub: https://github.com/Catboss1999/vpn-optimizer
 # ============================================================
@@ -50,72 +50,185 @@ fi
 
 info "检测到系统：$OS $OS_VERSION"
 
+# ============================================================
+# 第 0 步：自动安装依赖工具
+# ============================================================
+echo ""
+echo -e "${CYAN}========================================${PLAIN}"
+echo -e "${CYAN}  第 0 步：检查并安装依赖工具${PLAIN}"
+echo -e "${CYAN}========================================${PLAIN}"
+
+# 安装必要的工具（curl、openssl、sqlite3、ca-certificates）
+NEED_INSTALL=0
+for cmd in curl openssl sqlite3; do
+    if ! command -v $cmd &> /dev/null; then
+        NEED_INSTALL=1
+        info "缺少工具：$cmd"
+    fi
+done
+
+if [[ $NEED_INSTALL -eq 1 ]]; then
+    info "正在自动安装缺失的依赖工具..."
+
+    if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl openssl sqlite3 ca-certificates >/dev/null 2>&1
+    elif [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
+        yum install -y curl openssl sqlite ca-certificates >/dev/null 2>&1
+    else
+        warn "未知系统类型 $OS，尝试用 apt 安装..."
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl openssl sqlite3 ca-certificates >/dev/null 2>&1
+    fi
+
+    # 验证安装结果
+    INSTALL_OK=1
+    for cmd in curl openssl sqlite3; do
+        if ! command -v $cmd &> /dev/null; then
+            error "安装 $cmd 失败"
+            INSTALL_OK=0
+        fi
+    done
+
+    if [[ $INSTALL_OK -eq 1 ]]; then
+        ok "依赖工具安装完成"
+    else
+        error "部分依赖工具安装失败，请手动安装后重试"
+        exit 1
+    fi
+else
+    ok "依赖工具已就绪"
+fi
+
+# ============================================================
+# 第 1 步：确保内核支持 BBR（不支持则自动升级）
+# ============================================================
+echo ""
+echo -e "${CYAN}========================================${PLAIN}"
+echo -e "${CYAN}  第 1 步：检查内核版本并开启 BBR${PLAIN}"
+echo -e "${CYAN}========================================${PLAIN}"
+
 # 检查内核版本（BBR 需要 4.9+）
 KERNEL_VERSION=$(uname -r | cut -d. -f1-2)
 KERNEL_MAJOR=$(echo $KERNEL_VERSION | cut -d. -f1)
 KERNEL_MINOR=$(echo $KERNEL_VERSION | cut -d. -f2)
+
+NEED_KERNEL_UPGRADE=0
 if [[ $KERNEL_MAJOR -lt 4 ]] || [[ $KERNEL_MAJOR -eq 4 && $KERNEL_MINOR -lt 9 ]]; then
-    warn "内核版本 $KERNEL_VERSION 过低，BBR 需要 4.9+，将跳过 BBR 步骤"
-    SKIP_BBR=1
-else
-    SKIP_BBR=0
+    NEED_KERNEL_UPGRADE=1
 fi
 
-# 检查必要工具
-for cmd in curl openssl systemctl; do
-    if ! command -v $cmd &> /dev/null; then
-        error "缺少必要工具：$cmd，请先安装"
-        exit 1
-    fi
-done
+if [[ $NEED_KERNEL_UPGRADE -eq 1 ]]; then
+    info "当前内核 $KERNEL_VERSION 过低（BBR 需要 4.9+），正在自动升级内核..."
 
-# ============================================================
-# 第一步：开启 BBR
-# ============================================================
-echo ""
-echo -e "${CYAN}========================================${PLAIN}"
-echo -e "${CYAN}  第 1 步：开启 BBR 拥塞控制${PLAIN}"
-echo -e "${CYAN}========================================${PLAIN}"
+    if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y --install-recommends linux-image-generic linux-headers-generic >/dev/null 2>&1
 
-if [[ $SKIP_BBR -eq 1 ]]; then
-    warn "内核版本过低，跳过 BBR。建议升级内核：apt update && apt install linux-image-generic -y"
-else
-    # 检查是否已开启 BBR
-    CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
-    if echo "$CURRENT_CC" | grep -q "bbr"; then
-        ok "BBR 已经开启，跳过"
+        # 标记需要重启
+        touch /tmp/vpn-optimizer-need-reboot
+        info "内核已升级，需要重启服务器才能生效"
+
+        # 自动重启并设置重启后继续运行脚本
+        info "将在 5 秒后自动重启服务器，重启后请重新运行此脚本"
+        info "脚本会自动检测到内核已升级，跳过升级步骤继续执行"
+
+        # 设置重启后自动运行脚本的标志
+        cat > /etc/cron.d/vpn-optimizer-autorun << CRON_EOF
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+@reboot root sleep 30 && bash <(curl -fsSL https://raw.githubusercontent.com/Catboss1999/vpn-optimizer/main/optimize.sh) >> /var/log/vpn-optimizer.log 2>&1
+CRON_EOF
+
+        ok "已设置重启后自动继续运行脚本"
+        echo ""
+        warn "服务器即将重启..."
+        sleep 5
+        reboot
+        exit 0
     else
-        info "正在开启 BBR..."
+        warn "CentOS/RHEL 系统内核升级较复杂，尝试安装 ELRepo..."
+        if [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
+            yum install -y elrepo-release >/dev/null 2>&1
+            yum --enablerepo=elrepo-kernel install -y kernel-ml >/dev/null 2>&1
+            grub2-set-default 0 >/dev/null 2>&1
 
-        # 备份原配置（如果没备份过）
-        if [[ ! -f /etc/sysctl.conf.bak ]]; then
-            cp /etc/sysctl.conf /etc/sysctl.conf.bak
+            cat > /etc/cron.d/vpn-optimizer-autorun << CRON_EOF
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+@reboot root sleep 30 && bash <(curl -fsSL https://raw.githubusercontent.com/Catboss1999/vpn-optimizer/main/optimize.sh) >> /var/log/vpn-optimizer.log 2>&1
+CRON_EOF
+
+            ok "已设置重启后自动继续运行脚本"
+            echo ""
+            warn "服务器即将重启..."
+            sleep 5
+            reboot
+            exit 0
         fi
+    fi
+fi
 
-        # 写入 sysctl 配置（避免重复写入）
-        if ! grep -q "net.core.default_qdisc" /etc/sysctl.conf; then
-            echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-        fi
-        if ! grep -q "net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
-            echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-        fi
+# 清理自动运行 cron 任务（如果存在，说明是重启后继续运行的）
+if [[ -f /etc/cron.d/vpn-optimizer-autorun ]]; then
+    rm -f /etc/cron.d/vpn-optimizer-autorun
+    info "检测到重启后自动运行，继续执行..."
+fi
 
-        # 立即生效
-        sysctl -p >/dev/null 2>&1
+# 检查是否已开启 BBR
+CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
+if echo "$CURRENT_CC" | grep -q "bbr"; then
+    ok "BBR 已经开启"
+else
+    info "正在开启 BBR..."
 
-        # 验证
-        NEW_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
-        if echo "$NEW_CC" | grep -q "bbr"; then
-            ok "BBR 已开启：$NEW_CC"
+    # 自动加载 BBR 内核模块
+    modprobe tcp_bbr 2>/dev/null || true
+
+    # 确保 BBR 模块开机自动加载
+    if ! grep -q "tcp_bbr" /etc/modules-load.d/modules.conf 2>/dev/null; then
+        echo "tcp_bbr" >> /etc/modules-load.d/modules.conf 2>/dev/null || \
+            echo "tcp_bbr" > /etc/modules-load.d/bbr.conf 2>/dev/null || true
+    fi
+
+    # 备份原配置（如果没备份过）
+    if [[ ! -f /etc/sysctl.conf.bak ]]; then
+        cp /etc/sysctl.conf /etc/sysctl.conf.bak
+    fi
+
+    # 写入 sysctl 配置（避免重复写入）
+    if ! grep -q "net.core.default_qdisc" /etc/sysctl.conf; then
+        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    fi
+    if ! grep -q "net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+    fi
+
+    # 立即生效
+    sysctl -p >/dev/null 2>&1
+
+    # 验证
+    NEW_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
+    if echo "$NEW_CC" | grep -q "bbr"; then
+        ok "BBR 已开启：$NEW_CC"
+    else
+        # 最后手段：强制设置并重试
+        sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
+        sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+        FINAL_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
+        if echo "$FINAL_CC" | grep -q "bbr"; then
+            ok "BBR 已强制开启：$FINAL_CC"
         else
-            warn "BBR 开启失败，你的内核可能未加载 BBR 模块，不影响后续步骤"
-            warn "可尝试手动执行：modprobe tcp_bbr && sysctl -p"
+            warn "BBR 开启失败（内核可能不支持），不影响后续 Hysteria2 的使用"
         fi
     fi
 fi
 
 # ============================================================
-# 第二步：安装 Hysteria2
+# 第 2 步：安装 Hysteria2
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
@@ -126,7 +239,7 @@ echo -e "${CYAN}========================================${PLAIN}"
 if command -v hysteria &> /dev/null; then
     HY2_VERSION=$(hysteria version 2>/dev/null | head -1 || echo "已安装")
     ok "Hysteria2 已安装：$HY2_VERSION"
-    info "如需重新配置，脚本将覆盖现有配置"
+    info "将重新生成配置..."
 else
     info "正在安装 Hysteria2..."
 
@@ -142,7 +255,7 @@ else
 fi
 
 # ============================================================
-# 第三步：生成自签证书（无需域名）
+# 第 3 步：生成自签证书（无需域名）
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
@@ -152,29 +265,26 @@ echo -e "${CYAN}========================================${PLAIN}"
 CERT_DIR="/etc/hysteria"
 mkdir -p "$CERT_DIR"
 
-if [[ -f "$CERT_DIR/server.crt" && -f "$CERT_DIR/server.key" ]]; then
-    ok "证书已存在，跳过生成"
-else
-    info "正在生成自签证书（无需域名）..."
+# 每次都重新生成证书（确保有效）
+info "正在生成自签证书（无需域名）..."
 
-    # 先生成 EC 参数文件，再生成证书（兼容性更好的写法）
-    openssl ecparam -name prime256v1 -out "$CERT_DIR/ecparam.tmp" 2>/dev/null
-    openssl req -x509 -nodes -newkey ec:"$CERT_DIR/ecparam.tmp" \
-        -keyout "$CERT_DIR/server.key" \
-        -out "$CERT_DIR/server.crt" \
-        -subj "/CN=www.bing.com" -days 36500 2>/dev/null
-    rm -f "$CERT_DIR/ecparam.tmp"
+# 先生成 EC 参数文件，再生成证书（兼容性更好的写法）
+openssl ecparam -name prime256v1 -out "$CERT_DIR/ecparam.tmp" 2>/dev/null
+openssl req -x509 -nodes -newkey ec:"$CERT_DIR/ecparam.tmp" \
+    -keyout "$CERT_DIR/server.key" \
+    -out "$CERT_DIR/server.crt" \
+    -subj "/CN=www.bing.com" -days 36500 2>/dev/null
+rm -f "$CERT_DIR/ecparam.tmp"
 
-    # 设置权限
-    chown hysteria:hysteria "$CERT_DIR/server.key" "$CERT_DIR/server.crt" 2>/dev/null || true
-    chmod 644 "$CERT_DIR/server.crt"
-    chmod 600 "$CERT_DIR/server.key"
+# 设置权限
+chown hysteria:hysteria "$CERT_DIR/server.key" "$CERT_DIR/server.crt" 2>/dev/null || true
+chmod 644 "$CERT_DIR/server.crt"
+chmod 600 "$CERT_DIR/server.key"
 
-    ok "自签证书已生成（有效期 100 年，CN=www.bing.com）"
-fi
+ok "自签证书已生成（有效期 100 年，CN=www.bing.com）"
 
 # ============================================================
-# 第四步：生成随机密码和端口
+# 第 4 步：生成随机密码和端口
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
@@ -204,7 +314,13 @@ if [[ -f /etc/x-ui/x-ui.db ]]; then
     fi
 fi
 
-# 生成随机端口，避开已用端口
+# 检测已监听的端口
+LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -oP ':\K\d+' | sort -u | tr '\n' ' ')
+if [[ -n "$LISTENING_PORTS" ]]; then
+    USED_PORTS="$USED_PORTS $LISTENING_PORTS"
+fi
+
+# 生成随机端口，避开所有已用端口
 while true; do
     HY2_PORT=$(shuf -i 20000-50000 -n 1)
     if ! echo "$USED_PORTS" | grep -qw "$HY2_PORT"; then
@@ -250,7 +366,7 @@ EOF
 ok "配置文件已写入：$CERT_DIR/config.yaml"
 
 # ============================================================
-# 第五步：开放防火墙端口
+# 第 5 步：开放防火墙端口
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
@@ -275,10 +391,11 @@ iptables -C INPUT -p udp --dport $HY2_PORT -j ACCEPT 2>/dev/null || \
     iptables -I INPUT -p udp --dport $HY2_PORT -j ACCEPT 2>/dev/null || true
 ok "iptables 已放行 UDP $HY2_PORT"
 
-warn "⚠️  请确保云服务商的安全组也放行了 UDP $HY2_PORT 端口！"
+warn "⚠️  如果你的 VPS 服务商有网页端安全组/防火墙设置，请在那里也放行 UDP $HY2_PORT 端口"
+warn "    （这是唯一需要你手动操作的步骤，脚本无法替你操作云服务商网页）"
 
 # ============================================================
-# 第六步：启动服务
+# 第 6 步：启动服务
 # ============================================================
 echo ""
 echo -e "${CYAN}========================================${PLAIN}"
@@ -293,9 +410,44 @@ sleep 2
 if systemctl is-active --quiet hysteria-server; then
     ok "Hysteria2 服务已启动"
 else
-    error "Hysteria2 启动失败，查看日志：journalctl -u hysteria-server -e"
-    warn "常见原因：配置文件语法错误、端口被占用、证书权限不对"
-    exit 1
+    # 自动诊断常见问题并尝试修复
+    info "启动失败，正在自动诊断..."
+
+    # 检查端口是否被占用
+    if ss -uln | grep -q ":$HY2_PORT "; then
+        warn "端口 $HY2_PORT 被占用，正在重新生成端口..."
+        # 重新选端口
+        while true; do
+            HY2_PORT=$(shuf -i 20000-50000 -n 1)
+            if ! ss -uln | grep -q ":$HY2_PORT "; then
+                break
+            fi
+        done
+        # 更新配置文件中的端口
+        sed -i "s/^listen: :.*/listen: :$HY2_PORT/" "$CERT_DIR/config.yaml"
+        # 重新开防火墙
+        ufw allow $HY2_PORT/udp >/dev/null 2>&1 || true
+        iptables -I INPUT -p udp --dport $HY2_PORT -j ACCEPT 2>/dev/null || true
+        systemctl restart hysteria-server
+        sleep 2
+    fi
+
+    # 检查用户是否存在
+    if ! id hysteria &>/dev/null; then
+        useradd -r -s /usr/sbin/nologin hysteria 2>/dev/null || true
+        chown -R hysteria:hysteria "$CERT_DIR" 2>/dev/null || true
+        systemctl restart hysteria-server
+        sleep 2
+    fi
+
+    if systemctl is-active --quiet hysteria-server; then
+        ok "Hysteria2 服务已启动（自动修复后）"
+    else
+        error "Hysteria2 启动失败"
+        info "最后手段：查看日志诊断"
+        journalctl -u hysteria-server -e --no-pager | tail -20
+        exit 1
+    fi
 fi
 
 # ============================================================
@@ -347,7 +499,7 @@ echo -e "    SNI 填 www.bing.com"
 echo ""
 
 # Clash 配置片段
-echo -e "${YELLOW}📄 Clash Meta 配置片段：${PLAIN}"
+echo -e "${YELLOW}📄 Clash Meta 配置片段（直接复制）：${PLAIN}"
 echo ""
 cat << CLASH_EOF
   - name: "Hysteria2-Optimized"
@@ -364,7 +516,6 @@ echo -e "${YELLOW}💡 提示：${PLAIN}"
 echo -e "  • 原来的 VLESS+Reality 节点仍然可用，两个协议互不干扰"
 echo -e "  • 如果延迟仍然高，可能是 VPS 到国内的线路问题（换 CN2 GIA 线路可解决）"
 echo -e "  • 查看服务状态：systemctl status hysteria-server"
-echo -e "  • 查看日志：journalctl -u hysteria-server -e"
 echo -e "  • 配置文件：$CERT_DIR/config.yaml"
 echo ""
 echo -e "${GREEN}如果觉得有用，关注我的 X 获取更多 AI 工具和实用教程 🎯${PLAIN}"
