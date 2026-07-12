@@ -529,8 +529,19 @@ echo ""
 # 获取服务器公网 IP
 SERVER_IP=$(curl -s4 ifconfig.me 2>/dev/null || curl -s4 ip.sb 2>/dev/null || echo "你的服务器IP")
 
+# 确定客户端连接IP
+# 如果配置了出口代理，用静态住宅IP作为客户端连接地址（中转入口）
+# 用户需要在静态IP上配置端口转发到本VPS
+if [[ -n "$OUTBOUND_ADDR" ]]; then
+    CONNECT_IP=$(echo "$OUTBOUND_ADDR" | cut -d: -f1)
+    info "客户端连接地址使用静态住宅IP：$CONNECT_IP"
+    warn "请确保已在 $CONNECT_IP 上配置端口转发：UDP $HY2_PORT → $SERVER_IP:$HY2_PORT"
+else
+    CONNECT_IP="$SERVER_IP"
+fi
+
 # 一键导入链接
-HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=www.bing.com#Hysteria2-BBR"
+HY2_LINK="hysteria2://${HY2_PASSWORD}@${CONNECT_IP}:${HY2_PORT}?insecure=1&sni=www.bing.com#Hysteria2-BBR"
 
 echo -e "${YELLOW}一键导入链接（复制到客户端即可）：${PLAIN}"
 echo ""
@@ -552,8 +563,10 @@ echo -e "    复制上面的链接 → 打开 v2rayN → 服务器 → 从剪贴
 echo -e "    （需要 v2rayN 6.0+，自带 sing-box 内核支持 Hysteria2）"
 echo ""
 echo -e "${YELLOW}配置摘要：${PLAIN}"
-echo -e "  服务器 IP：  ${CYAN}$SERVER_IP${PLAIN}"
-echo -e "  端口：       ${CYAN}$HY2_PORT (UDP)${PLAIN}"
+echo -e "  连接地址：  ${CYAN}$CONNECT_IP:$HY2_PORT (UDP)${PLAIN}"
+if [[ "$CONNECT_IP" != "$SERVER_IP" ]]; then
+    echo -e "  VPS 地址：  ${CYAN}$SERVER_IP:$HY2_PORT (UDP)${PLAIN}"
+fi
 echo -e "  密码：       ${CYAN}$HY2_PASSWORD${PLAIN}"
 echo -e "  SNI：        ${CYAN}www.bing.com${PLAIN}"
 if [[ -n "$OUTBOUND_ADDR" ]]; then
@@ -561,7 +574,7 @@ if [[ -n "$OUTBOUND_ADDR" ]]; then
     if [[ -n "$OUTBOUND_USER" ]]; then
         echo -e "  代理认证：   ${CYAN}$OUTBOUND_USER${PLAIN}"
     fi
-    echo -e "  ${GREEN}所有流量将通过静态IP出去，目标网站看到的是代理IP${PLAIN}"
+    echo -e "  ${GREEN}所有流量将通过静态住宅IP出去，目标网站看到的是代理IP${PLAIN}"
 fi
 echo ""
 echo -e "${YELLOW}服务管理：${PLAIN}"
