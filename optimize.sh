@@ -248,17 +248,39 @@ else
     ok "3x-ui 服务运行中"
 fi
 
-# 读取面板端口和路径（仅用于显示面板地址）
+# 读取面板配置（多种方式，确保读到正确值）
 info "正在读取 3x-ui 面板配置..."
-PANEL_INFO=$(x-ui setting -show true 2>/dev/null || echo "")
+PANEL_INFO=$(x-ui setting -show true 2>&1 || echo "")
 
-PANEL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port:\s*\K\d+' || echo "")
+# --- 读取面板端口 ---
+# 方式 1：从 x-ui setting 输出解析（用 sed 代替 grep -P，兼容性更好）
+PANEL_PORT=$(echo "$PANEL_INFO" | sed -n 's/^port:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+
+# 方式 2：从监听端口检测 x-ui 进程
 if [[ -z "$PANEL_PORT" ]]; then
+    PANEL_PORT=$(ss -tlnp 2>/dev/null | grep -i 'x-ui' | head -1 | grep -o ':[0-9]\+' | head -1 | tr -d ':')
+fi
+
+# 方式 3：从数据库读取（如果 sqlite3 可用）
+if [[ -z "$PANEL_PORT" ]] && command -v sqlite3 &> /dev/null && [[ -f /etc/x-ui/x-ui.db ]]; then
+    PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webPort';" 2>/dev/null | head -1)
+fi
+
+if [[ -n "$PANEL_PORT" ]]; then
+    ok "面板端口：$PANEL_PORT"
+else
     PANEL_PORT=2053
     warn "未能自动读取面板端口，使用默认值：$PANEL_PORT"
 fi
 
-PANEL_PATH=$(echo "$PANEL_INFO" | grep -oP 'webBasePath:\s*\K\S+' || echo "")
+# --- 读取面板路径 ---
+PANEL_PATH=$(echo "$PANEL_INFO" | sed -n 's/^webBasePath:[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1)
+if [[ -z "$PANEL_PATH" ]]; then
+    # 从数据库读取
+    if command -v sqlite3 &> /dev/null && [[ -f /etc/x-ui/x-ui.db ]]; then
+        PANEL_PATH=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webBasePath';" 2>/dev/null | head -1)
+    fi
+fi
 if [[ -z "$PANEL_PATH" ]]; then
     PANEL_PATH="/"
 fi
@@ -266,18 +288,17 @@ fi
 [[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
 [[ "$PANEL_PATH" != */ ]] && PANEL_PATH="$PANEL_PATH/"
 
-# 判断面板是否使用 HTTPS
-PANEL_CERT=$(echo "$PANEL_INFO" | grep -oP 'certFile:\s*\K\S+' || echo "")
-PANEL_KEY=$(echo "$PANEL_INFO" | grep -oP 'keyFile:\s*\K\S+' || echo "")
-if [[ -n "$PANEL_CERT" && -n "$PANEL_KEY" && -f "$PANEL_CERT" && -f "$PANEL_KEY" ]]; then
+# --- 判断面板是否使用 HTTPS ---
+# x-ui setting 输出中有 "Panel is secure with SSL" 或 "not secure with SSL"
+if echo "$PANEL_INFO" | grep -q "secure with SSL" && ! echo "$PANEL_INFO" | grep -q "not secure"; then
     PANEL_SCHEME="https"
 else
     PANEL_SCHEME="http"
 fi
 
-# 检查 3x-ui 版本是否支持 Hysteria2
+# --- 检查 3x-ui 版本 ---
 info "正在检查 3x-ui 版本..."
-XUI_VERSION=$(x-ui version 2>/dev/null | head -1 | grep -oP 'v?\d+\.\d+\.\d+' || echo "")
+XUI_VERSION=$(x-ui version 2>&1 | head -1 | sed -n 's/.*\(v\?[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 
 if [[ -n "$XUI_VERSION" ]]; then
     info "3x-ui 版本：$XUI_VERSION"
@@ -334,7 +355,7 @@ HY2_PASSWORD=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
 
 # 检测已监听的端口，避免冲突（用 ss 代替 sqlite3，不再依赖数据库）
 USED_PORTS="$PANEL_PORT"
-LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -oP ':\K\d+' | sort -u | tr '\n' ' ')
+LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -o ':[0-9]\+' | tr -d ':' | sort -u | tr '\n' ' ')
 if [[ -n "$LISTENING_PORTS" ]]; then
     USED_PORTS="$USED_PORTS $LISTENING_PORTS"
 fi
