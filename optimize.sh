@@ -391,7 +391,7 @@ iptables -C INPUT -p udp --dport $HY2_PORT -j ACCEPT 2>/dev/null || \
     iptables -I INPUT -p udp --dport $HY2_PORT -j ACCEPT 2>/dev/null || true
 ok "iptables 已放行 UDP $HY2_PORT"
 
-warn "⚠️  如果你的 VPS 服务商有网页端安全组/防火墙设置，请在那里也放行 UDP $HY2_PORT 端口"
+warn "如果你的 VPS 服务商有网页端安全组/防火墙设置，请在那里也放行 UDP $HY2_PORT 端口"
 warn "    （这是唯一需要你手动操作的步骤，脚本无法替你操作云服务商网页）"
 
 # ============================================================
@@ -455,14 +455,14 @@ fi
 # ============================================================
 echo ""
 echo -e "${GREEN}========================================${PLAIN}"
-echo -e "${GREEN}  🎉 全部完成！${PLAIN}"
+echo -e "${GREEN}  全部完成！${PLAIN}"
 echo -e "${GREEN}========================================${PLAIN}"
 echo ""
 
 # 获取服务器公网 IP
 SERVER_IP=$(curl -s4 ifconfig.me 2>/dev/null || curl -s4 ip.sb 2>/dev/null || echo "你的服务器IP")
 
-echo -e "${YELLOW}📋 你的 Hysteria2 连接信息：${PLAIN}"
+echo -e "${YELLOW}你的 Hysteria2 连接信息：${PLAIN}"
 echo ""
 echo -e "  服务器 IP：  ${CYAN}$SERVER_IP${PLAIN}"
 echo -e "  端口：       ${CYAN}$HY2_PORT${PLAIN}"
@@ -474,13 +474,13 @@ echo ""
 # 生成连接链接
 HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=www.bing.com#Hysteria2-Optimized"
 
-echo -e "${YELLOW}🔗 一键导入链接（复制到客户端即可）：${PLAIN}"
+echo -e "${YELLOW}一键导入链接（复制到客户端即可）：${PLAIN}"
 echo ""
 echo -e "  ${CYAN}${HY2_LINK}${PLAIN}"
 echo ""
 
 # 客户端配置说明
-echo -e "${YELLOW}📱 客户端配置说明：${PLAIN}"
+echo -e "${YELLOW}客户端配置说明：${PLAIN}"
 echo ""
 echo -e "  ${GREEN}Shadowrocket (iOS)：${PLAIN}"
 echo -e "    类型选 Hysteria2 → 填 IP + 端口 + 密码"
@@ -499,7 +499,7 @@ echo -e "    SNI 填 www.bing.com"
 echo ""
 
 # Clash 配置片段
-echo -e "${YELLOW}📄 Clash Meta 配置片段（直接复制）：${PLAIN}"
+echo -e "${YELLOW}Clash Meta 配置片段（直接复制）：${PLAIN}"
 echo ""
 cat << CLASH_EOF
   - name: "Hysteria2-Optimized"
@@ -512,10 +512,10 @@ cat << CLASH_EOF
 
 CLASH_EOF
 
-echo -e "${YELLOW}💡 提示：${PLAIN}"
+echo -e "${YELLOW}提示：${PLAIN}"
 echo -e "  • 原来的 VLESS+Reality 节点仍然可用，两个协议互不干扰"
 echo -e "  • 如果延迟仍然高，可能是 VPS 到国内的线路问题（换 CN2 GIA 线路可解决）"
 echo -e "  • 查看服务状态：systemctl status hysteria-server"
 echo -e "  • 配置文件：$CERT_DIR/config.yaml"
 echo ""
-echo -e "${GREEN}如果觉得有用，关注我的 X @PardoCat0406 获取更多 AI 工具和实用教程 🎯${PLAIN}"
+echo -e "${GREEN}如果觉得有用，关注我的 X @PardoCat0406 获取更多 AI 工具和实用教程${PLAIN}"
