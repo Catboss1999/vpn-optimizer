@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================================
-# VPN Optimizer - 一键开启 BBR + 通过 3x-ui 面板添加 Hysteria2
+# VPN Optimizer - 一键开启 BBR + 生成 Hysteria2 配置
 # 适用于已安装 3x-ui 的 VPS，解决网络延迟高的问题
-# Hysteria2 节点直接在 3x-ui 面板中管理，支持流量统计和分享链接
+# 脚本完成基础环境配置（BBR/证书/防火墙），
+# Hysteria2 入站通过 3x-ui 面板手动添加（脚本会给出详细教程）
 # 兼容 Ubuntu 18.04+ / Debian 10+ / CentOS 7+
 # GitHub: https://github.com/Catboss1999/vpn-optimizer
 # ============================================================
@@ -58,9 +59,9 @@ echo -e "${CYAN}========================================${PLAIN}"
 echo -e "${CYAN}  第 0 步：检查并安装依赖工具${PLAIN}"
 echo -e "${CYAN}========================================${PLAIN}"
 
-# 安装必要的工具（curl、openssl、sqlite3、ca-certificates、jq）
+# 只需要 curl 和 openssl（不再需要 sqlite3/jq）
 NEED_INSTALL=0
-for cmd in curl openssl sqlite3 jq; do
+for cmd in curl openssl; do
     if ! command -v $cmd &> /dev/null; then
         NEED_INSTALL=1
         info "缺少工具：$cmd"
@@ -73,19 +74,19 @@ if [[ $NEED_INSTALL -eq 1 ]]; then
     if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -y >/dev/null 2>&1
-        apt-get install -y curl openssl sqlite3 ca-certificates jq >/dev/null 2>&1
+        apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
     elif [[ "$OS" == "centos" || "$OS" == "rhel" || "$OS" == "rocky" || "$OS" == "almalinux" ]]; then
-        yum install -y curl openssl sqlite ca-certificates jq >/dev/null 2>&1
+        yum install -y curl openssl ca-certificates >/dev/null 2>&1
     else
         warn "未知系统类型 $OS，尝试用 apt 安装..."
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -y >/dev/null 2>&1
-        apt-get install -y curl openssl sqlite3 ca-certificates jq >/dev/null 2>&1
+        apt-get install -y curl openssl ca-certificates >/dev/null 2>&1
     fi
 
     # 验证安装结果
     INSTALL_OK=1
-    for cmd in curl openssl sqlite3 jq; do
+    for cmd in curl openssl; do
         if ! command -v $cmd &> /dev/null; then
             error "安装 $cmd 失败"
             INSTALL_OK=0
@@ -247,37 +248,21 @@ else
     ok "3x-ui 服务运行中"
 fi
 
-# 读取 3x-ui 面板配置
+# 读取面板端口和路径（仅用于显示面板地址）
 info "正在读取 3x-ui 面板配置..."
-
-# 从 x-ui 命令读取面板设置
 PANEL_INFO=$(x-ui setting -show true 2>/dev/null || echo "")
 
-# 提取面板端口
 PANEL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port:\s*\K\d+' || echo "")
 if [[ -z "$PANEL_PORT" ]]; then
     PANEL_PORT=2053
     warn "未能自动读取面板端口，使用默认值：$PANEL_PORT"
 fi
 
-# 提取面板路径
 PANEL_PATH=$(echo "$PANEL_INFO" | grep -oP 'webBasePath:\s*\K\S+' || echo "")
 if [[ -z "$PANEL_PATH" ]]; then
     PANEL_PATH="/"
-    warn "未能自动读取面板路径，使用默认值：$PANEL_PATH"
 fi
 
-# 提取用户名和密码
-PANEL_USER=$(echo "$PANEL_INFO" | grep -oP 'username:\s*\K\S+' || echo "")
-PANEL_PASS=$(echo "$PANEL_INFO" | grep -oP 'password:\s*\K\S+' || echo "")
-
-if [[ -z "$PANEL_USER" || -z "$PANEL_PASS" ]]; then
-    error "未能读取 3x-ui 面板用户名或密码"
-    info "请手动运行 'x-ui setting -show true' 确认面板配置"
-    exit 1
-fi
-
-# 确保路径以 / 开头且以 / 结尾（用于 URL 拼接）
 [[ "$PANEL_PATH" != /* ]] && PANEL_PATH="/$PANEL_PATH"
 [[ "$PANEL_PATH" != */ ]] && PANEL_PATH="$PANEL_PATH/"
 
@@ -290,29 +275,23 @@ else
     PANEL_SCHEME="http"
 fi
 
-PANEL_URL="${PANEL_SCHEME}://127.0.0.1:${PANEL_PORT}${PANEL_PATH}"
-info "面板地址：$PANEL_URL"
-info "面板用户：$PANEL_USER"
-
 # 检查 3x-ui 版本是否支持 Hysteria2
 info "正在检查 3x-ui 版本..."
 XUI_VERSION=$(x-ui version 2>/dev/null | head -1 | grep -oP 'v?\d+\.\d+\.\d+' || echo "")
 
 if [[ -n "$XUI_VERSION" ]]; then
     info "3x-ui 版本：$XUI_VERSION"
-    # 提取主版本号和次版本号
     XUI_MAJOR=$(echo "$XUI_VERSION" | sed 's/v//' | cut -d. -f1)
     XUI_MINOR=$(echo "$XUI_VERSION" | sed 's/v//' | cut -d. -f2)
-    # Hysteria2 支持从 2.9.0 开始（2026年4月）
     if [[ $XUI_MAJOR -lt 2 ]] || [[ $XUI_MAJOR -eq 2 && $XUI_MINOR -lt 9 ]]; then
-        warn "3x-ui 版本 $XUI_VERSION 可能不支持 Hysteria2（需要 v2.9.0+）"
-        warn "建议升级 3x-ui：x-ui update"
-        info "继续尝试，如果失败请先升级 3x-ui"
+        warn "3x-ui 版本 $XUI_VERSION 不支持 Hysteria2（需要 v2.9.0+）"
+        warn "请先升级 3x-ui：x-ui update"
+        exit 1
     else
         ok "3x-ui 版本支持 Hysteria2"
     fi
 else
-    warn "无法读取 3x-ui 版本，继续尝试..."
+    warn "无法读取 3x-ui 版本，如果面板中没有 hysteria 协议选项，请升级：x-ui update"
 fi
 
 # ============================================================
@@ -353,17 +332,8 @@ echo -e "${CYAN}========================================${PLAIN}"
 # 生成随机密码
 HY2_PASSWORD=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)
 
-# 检测 3x-ui 已使用的 inbound 端口（从数据库读）
+# 检测已监听的端口，避免冲突（用 ss 代替 sqlite3，不再依赖数据库）
 USED_PORTS="$PANEL_PORT"
-if [[ -f /etc/x-ui/x-ui.db ]]; then
-    DB_PORTS=$(sqlite3 /etc/x-ui/x-ui.db "SELECT port FROM inbounds;" 2>/dev/null || echo "")
-    if [[ -n "$DB_PORTS" ]]; then
-        USED_PORTS="$USED_PORTS $DB_PORTS"
-        info "检测到 3x-ui 已用端口：$(echo $DB_PORTS | tr '\n' ' ')"
-    fi
-fi
-
-# 检测已监听的端口
 LISTENING_PORTS=$(ss -tuln 2>/dev/null | grep -oP ':\K\d+' | sort -u | tr '\n' ' ')
 if [[ -n "$LISTENING_PORTS" ]]; then
     USED_PORTS="$USED_PORTS $LISTENING_PORTS"
@@ -404,211 +374,60 @@ iptables -C INPUT -p udp --dport $HY2_PORT -j ACCEPT 2>/dev/null || \
 ok "iptables 已放行 UDP $HY2_PORT"
 
 warn "如果你的 VPS 服务商有网页端安全组/防火墙设置，请在那里也放行 UDP $HY2_PORT 端口"
-warn "    （这是唯一需要你手动操作的步骤，脚本无法替你操作云服务商网页）"
 
 # ============================================================
-# 第 6 步：通过 3x-ui API 添加 Hysteria2 入站
-# ============================================================
-echo ""
-echo -e "${CYAN}========================================${PLAIN}"
-echo -e "${CYAN}  第 6 步：通过 3x-ui 面板添加 Hysteria2 入站${PLAIN}"
-echo -e "${CYAN}========================================${PLAIN}"
-
-# 登录 3x-ui 面板获取 session cookie
-info "正在登录 3x-ui 面板..."
-
-COOKIE_FILE="/tmp/x-ui-cookie-$$"
-LOGIN_RESP=$(curl -sk -c "$COOKIE_FILE" -X POST "${PANEL_URL}login" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "username=${PANEL_USER}&password=${PANEL_PASS}" 2>/dev/null || echo "")
-
-# 检查登录是否成功
-LOGIN_SUCCESS=$(echo "$LOGIN_RESP" | jq -r '.success // false' 2>/dev/null || echo "false")
-if [[ "$LOGIN_SUCCESS" != "true" ]]; then
-    error "3x-ui 面板登录失败"
-    info "请检查面板用户名和密码是否正确"
-    info "可通过 'x-ui setting -show true' 查看当前配置"
-    rm -f "$COOKIE_FILE"
-    exit 1
-fi
-
-ok "3x-ui 面板登录成功"
-
-# 构建 Hysteria2 inbound 的 JSON 数据
-# 3x-ui 中 Hysteria2 使用 protocol="hysteria"，通过 streamSettings.version=2 区分
-info "正在创建 Hysteria2 入站..."
-
-# 构建 settings JSON（包含客户端认证信息）
-SETTINGS_JSON=$(cat << EOF
-{
-    "clients": [
-        {
-            "auth": "${HY2_PASSWORD}",
-            "email": "hy2-user",
-            "enable": true,
-            "limitIp": 0,
-            "totalGB": 0,
-            "expiryTime": 0,
-            "reset": 0,
-            "subId": ""
-        }
-    ],
-    "version": 2,
-    "obfs": "",
-    "obfsPassword": ""
-}
-EOF
-)
-
-# 构建 streamSettings JSON
-# network=hysteria, security=tls, 自签证书
-# allowInsecure 在服务端不设（客户端侧设置 insecure=1）
-STREAM_JSON=$(cat << EOF
-{
-    "network": "hysteria",
-    "security": "tls",
-    "tlsSettings": {
-        "serverName": "www.bing.com",
-        "minVersion": "1.3",
-        "maxVersion": "1.3",
-        "cipherSuites": "",
-        "certificates": [
-            {
-                "certificateFile": "${CERT_DIR}/hy2_server.crt",
-                "keyFile": "${CERT_DIR}/hy2_server.key",
-                "ocspStapling": 3600
-            }
-        ],
-        "alpn": ["h3"],
-        "settings": {
-            "allowInsecure": true,
-            "fingerprint": "chrome"
-        }
-    },
-    "hysteriaSettings": {
-        "version": 2,
-        "auth": "${HY2_PASSWORD}",
-        "udpIdleTimeout": 60
-    }
-}
-EOF
-)
-
-# 构建 sniffing JSON
-SNIFFING_JSON='{"enabled":true,"destOverride":["http","tls","quic"],"metadataOnly":false,"routeOnly":false}'
-
-# 构建完整的 inbound 请求体
-INBOUND_DATA=$(cat << EOF
-{
-    "up": 0,
-    "down": 0,
-    "total": 0,
-    "remark": "Hysteria2-BBR",
-    "enable": true,
-    "expiryTime": 0,
-    "listen": "",
-    "port": ${HY2_PORT},
-    "protocol": "hysteria",
-    "settings": $(echo "$SETTINGS_JSON" | jq -c .),
-    "streamSettings": $(echo "$STREAM_JSON" | jq -c .),
-    "sniffing": $(echo "$SNIFFING_JSON" | jq -c .),
-    "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
-}
-EOF
-)
-
-# 发送 API 请求添加 inbound
-ADD_RESP=$(curl -sk -b "$COOKIE_FILE" -X POST "${PANEL_URL}panel/api/inbounds/add" \
-    -H "Content-Type: application/json" \
-    -d "$INBOUND_DATA" 2>/dev/null || echo "")
-
-# 检查是否添加成功
-ADD_SUCCESS=$(echo "$ADD_RESP" | jq -r '.success // false' 2>/dev/null || echo "false")
-
-if [[ "$ADD_SUCCESS" == "true" ]]; then
-    INBOUND_ID=$(echo "$ADD_RESP" | jq -r '.obj.id // empty' 2>/dev/null || echo "")
-    ok "Hysteria2 入站已添加到 3x-ui 面板（ID: $INBOUND_ID）"
-else
-    error "通过 API 添加 Hysteria2 入站失败"
-    error_msg=$(echo "$ADD_RESP" | jq -r '.msg // "未知错误"' 2>/dev/null || echo "未知错误")
-    info "错误信息：$error_msg"
-
-    # 如果 API 方式失败，提示用户手动添加
-    info ""
-    info "API 方式失败，你可以手动在 3x-ui 面板中添加："
-    info "  1. 打开 3x-ui 面板网页"
-    info "  2. 入站列表 -> 添加入站"
-    info "  3. 协议选择 hysteria"
-    info "  4. 端口填：$HY2_PORT"
-    info "  5. 传输选 hysteria，版本选 2"
-    info "  6. 安全选 TLS，证书路径填：$CERT_DIR/hy2_server.crt 和 $CERT_DIR/hy2_server.key"
-    info "  7. SNI 填 www.bing.com，勾选 allowInsecure"
-    info "  8. 客户端 auth 密码填：$HY2_PASSWORD"
-    rm -f "$COOKIE_FILE"
-    exit 1
-fi
-
-# 重启 x-ui 使配置生效
-info "正在重启 3x-ui 服务使配置生效..."
-systemctl restart x-ui 2>/dev/null
-sleep 3
-
-if systemctl is-active --quiet x-ui; then
-    ok "3x-ui 服务已重启"
-else
-    warn "3x-ui 重启后状态异常，请手动检查：systemctl status x-ui"
-fi
-
-# 清理 cookie 文件
-rm -f "$COOKIE_FILE"
-
-# ============================================================
-# 输出结果
+# 第 6 步：输出 3x-ui 面板操作教程
 # ============================================================
 echo ""
 echo -e "${GREEN}========================================${PLAIN}"
-echo -e "${GREEN}  全部完成！${PLAIN}"
+echo -e "${GREEN}  环境配置完成！${PLAIN}"
+echo -e "${GREEN}  以下操作请在 3x-ui 面板中完成${PLAIN}"
 echo -e "${GREEN}========================================${PLAIN}"
 echo ""
 
 # 获取服务器公网 IP
 SERVER_IP=$(curl -s4 ifconfig.me 2>/dev/null || curl -s4 ip.sb 2>/dev/null || echo "你的服务器IP")
 
-echo -e "${YELLOW}Hysteria2 节点信息（也可在 3x-ui 面板中查看）：${PLAIN}"
+# 面板地址
+PANEL_ADDR="${PANEL_SCHEME}://${SERVER_IP}:${PANEL_PORT}${PANEL_PATH}"
+
+echo -e "${YELLOW}请在 3x-ui 面板中添加 Hysteria2 入站：${PLAIN}"
 echo ""
-echo -e "  服务器 IP：  ${CYAN}$SERVER_IP${PLAIN}"
-echo -e "  端口：       ${CYAN}$HY2_PORT${PLAIN}"
-echo -e "  密码：       ${CYAN}$HY2_PASSWORD${PLAIN}"
-echo -e "  SNI：        ${CYAN}www.bing.com${PLAIN}"
-echo -e "  跳过验证：   ${CYAN}是（自签证书）${PLAIN}"
-echo -e "  协议：       ${CYAN}Hysteria2${PLAIN}"
+echo -e "  ${GREEN}1.${PLAIN} 打开面板：${CYAN}${PANEL_ADDR}${PLAIN}"
+echo ""
+echo -e "  ${GREEN}2.${PLAIN} 左侧菜单点「入站列表」，再点右上角「添加入站」"
+echo ""
+echo -e "  ${GREEN}3.${PLAIN} 填写基本信息："
+echo -e "     ${CYAN}备注${PLAIN}      Hysteria2-BBR"
+echo -e "     ${CYAN}协议${PLAIN}      hysteria"
+echo -e "     ${CYAN}端口${PLAIN}      ${HY2_PORT}"
+echo ""
+echo -e "  ${GREEN}4.${PLAIN} 客户端设置："
+echo -e "     ${CYAN}密码${PLAIN}      ${HY2_PASSWORD}"
+echo -e "     （在 auth/password 字段填入上面这串密码）"
+echo ""
+echo -e "  ${GREEN}5.${PLAIN} 传输设置："
+echo -e "     ${CYAN}版本${PLAIN}      2"
+echo ""
+echo -e "  ${GREEN}6.${PLAIN} TLS 设置（安全选 tls）："
+echo -e "     ${CYAN}SNI${PLAIN}       www.bing.com"
+echo -e "     ${CYAN}证书路径${PLAIN}  ${CERT_DIR}/hy2_server.crt"
+echo -e "     ${CYAN}密钥路径${PLAIN}  ${CERT_DIR}/hy2_server.key"
+echo -e "     ${CYAN}ALPN${PLAIN}      h3"
+echo -e "     ${CYAN}允许不安全${PLAIN} 勾选"
+echo ""
+echo -e "  ${GREEN}7.${PLAIN} 点「添加」保存"
+echo ""
+echo -e "  ${GREEN}8.${PLAIN} 添加完成后，在入站列表点该节点的二维码图标"
+echo -e "     可以扫码导入客户端，也可以复制分享链接"
 echo ""
 
-# 生成连接链接
+# 预生成的分享链接（和面板生成的等效，方便用户直接复制）
 HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-BBR"
 
-echo -e "${YELLOW}一键导入链接（复制到客户端即可）：${PLAIN}"
+echo -e "${YELLOW}一键导入链接（和面板生成的等效，复制到客户端即可）：${PLAIN}"
 echo ""
 echo -e "  ${CYAN}${HY2_LINK}${PLAIN}"
-echo ""
-
-# 客户端配置说明
-echo -e "${YELLOW}客户端配置说明：${PLAIN}"
-echo ""
-echo -e "  ${GREEN}Shadowrocket (iOS)：${PLAIN}"
-echo -e "    类型选 Hysteria2 -> 填 IP + 端口 + 密码"
-echo -e "    打开「允许不安全」开关"
-echo -e "    SNI 填 www.bing.com"
-echo ""
-echo -e "  ${GREEN}v2rayN / Nekoray (Windows)：${PLAIN}"
-echo -e "    添加 Hysteria2 节点 -> 填 IP + 端口 + 密码"
-echo -e "    勾选 AllowInsecure（跳过证书验证）"
-echo -e "    SNI 填 www.bing.com"
-echo ""
-echo -e "  ${GREEN}Clash Meta / mihomo：${PLAIN}"
-echo -e "    proxy 类型选 hysteria2"
-echo -e "    skip-cert-verify: true"
-echo -e "    SNI 填 www.bing.com"
 echo ""
 
 # Clash 配置片段
@@ -627,10 +446,18 @@ cat << CLASH_EOF
 
 CLASH_EOF
 
+# 配置摘要
+echo -e "${YELLOW}配置摘要（供记录）：${PLAIN}"
+echo -e "  服务器 IP：  ${CYAN}$SERVER_IP${PLAIN}"
+echo -e "  端口：       ${CYAN}$HY2_PORT (UDP)${PLAIN}"
+echo -e "  密码：       ${CYAN}$HY2_PASSWORD${PLAIN}"
+echo -e "  SNI：        ${CYAN}www.bing.com${PLAIN}"
+echo -e "  证书：       ${CYAN}${CERT_DIR}/hy2_server.crt${PLAIN}"
+echo -e "  密钥：       ${CYAN}${CERT_DIR}/hy2_server.key${PLAIN}"
+echo -e "  面板地址：   ${CYAN}${PANEL_ADDR}${PLAIN}"
+echo ""
 echo -e "${YELLOW}提示：${PLAIN}"
-echo -e "  - Hysteria2 节点已添加到 3x-ui 面板，可在面板中查看流量、管理客户端"
 echo -e "  - 原来的 VLESS+Reality 节点仍然可用，两个协议互不干扰"
 echo -e "  - 如果延迟仍然高，可能是 VPS 到国内的线路问题（换 CN2 GIA 线路可解决）"
-echo -e "  - 在 3x-ui 面板中可查看节点二维码和分享链接"
-echo -e "  - 面板地址：${PANEL_SCHEME}://${SERVER_IP}:${PANEL_PORT}${PANEL_PATH}"
+echo -e "  - 如果面板中没有 hysteria 协议选项，说明 3x-ui 版本太旧，运行 x-ui update 升级"
 echo ""
