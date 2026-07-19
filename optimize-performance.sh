@@ -1,6 +1,6 @@
 #!/bin/bash
-# Hysteria2 性能优化脚本
-# 用途：在已部署 Hysteria2 的 VPS 上一键优化延迟和吞吐
+# Hysteria2 一键部署 + 性能优化脚本
+# 用途：新 VPS 零准备 → 自动部署 Hysteria2 + 性能优化
 # 使用：bash optimize-performance.sh
 
 set -e
@@ -25,8 +25,36 @@ fi
 
 # 检查 Hysteria2 是否已安装
 if ! systemctl is-active --quiet hysteria-server 2>/dev/null; then
-    error "Hysteria2 服务未运行，请先部署 Hysteria2"
-    exit 1
+    warn "Hysteria2 服务未运行，将自动先部署 Hysteria2..."
+    echo ""
+    
+    # 下载并运行主部署脚本
+    DEPLOY_URL="https://cdn.jsdelivr.net/gh/Catboss1999/vpn-optimizer@main/optimize.sh"
+    DEPLOY_SCRIPT="/tmp/deploy-hy2.sh"
+    
+    info "正在下载部署脚本..."
+    if ! curl -fsSL "$DEPLOY_URL" -o "$DEPLOY_SCRIPT"; then
+        # 回退：raw git
+        curl -fsSL "https://raw.githubusercontent.com/Catboss1999/vpn-optimizer/main/optimize.sh" -o "$DEPLOY_SCRIPT" || {
+            error "无法下载部署脚本，请检查网络后重试"
+            exit 1
+        }
+    fi
+    chmod +x "$DEPLOY_SCRIPT"
+    
+    info "正在部署 Hysteria2（需要你交互式输入配置）..."
+    echo ""
+    bash "$DEPLOY_SCRIPT"
+    
+    # 部署脚本内部会 reboot（如果升级了内核），
+    # 如果没 reboot，说明系统已就绪，继续优化
+    if ! systemctl is-active --quiet hysteria-server 2>/dev/null; then
+        error "Hysteria2 部署后服务仍未运行，请检查部署日志"
+        exit 1
+    fi
+    
+    ok "Hysteria2 部署完成，继续优化..."
+    echo ""
 fi
 
 CONFIG_FILE="/etc/hysteria/config.yaml"
