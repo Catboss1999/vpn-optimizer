@@ -88,13 +88,23 @@ net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
 
 # 大缓冲区（高 BDP 链路优化）
-net.core.rmem_max = 134217728
-net.core.wmem_max = 134217728
-net.core.rmem_default = 67108864
-net.core.wmem_default = 67108864
-net.ipv4.tcp_rmem = 4096 87380 134217728
-net.ipv4.tcp_wmem = 4096 65536 134217728
+net.core.rmem_max = 268435456
+net.core.wmem_max = 268435456
+net.core.rmem_default = 134217728
+net.core.wmem_default = 134217728
+net.ipv4.tcp_rmem = 4096 87380 268435456
+net.ipv4.tcp_wmem = 4096 65536 268435456
 net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 16384
+
+# NIC 优化：排队深度 + 中断预算
+net.core.netdev_max_backlog = 250000
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 8000
+
+# 文件描述符上限
+fs.file-max = 512000
 SYSCTL_EOF
 
     sysctl --system >/dev/null 2>&1
@@ -107,6 +117,45 @@ SYSCTL_EOF
 fi
 
 ok "内核网络参数优化完成"
+
+# ============================================
+# 优化 1b：NIC 硬件层 + CPU 调度
+# ============================================
+info "正在优化 NIC 硬件层..."
+
+# 增大网卡发送队列（减少丢包）
+NIC=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'dev \K\S+' || echo "eth0")
+if [[ -n "$NIC" ]]; then
+    ip link set "$NIC" txqueuelen 10000 2>/dev/null && \
+        ok "网卡 $NIC 发送队列已设为 10000" || \
+        warn "无法调整网卡 $NIC 的发送队列"
+fi
+
+# CPU 性能模式（防止节能降频拖慢 QUIC 处理）
+if [ -d /sys/devices/system/cpu/cpufreq ]; then
+    GOV_COUNT=0
+    for gov_file in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        if [ -f "$gov_file" ]; then
+            echo performance > "$gov_file" 2>/dev/null
+            GOV_COUNT=$((GOV_COUNT + 1))
+        fi
+    done
+    if [ $GOV_COUNT -gt 0 ]; then
+        ok "CPU 调度器已设为 performance（$GOV_COUNT 核）"
+    fi
+else
+    ok "CPU 频率调节不可用（VPS 常见），跳过"
+fi
+
+# OS 调优：允许更多连接
+ulimit -n 512000 2>/dev/null || true
+if ! grep -q "nofile 512000" /etc/security/limits.conf 2>/dev/null; then
+    echo "* soft nofile 512000" >> /etc/security/limits.conf
+    echo "* hard nofile 512000" >> /etc/security/limits.conf
+    ok "文件描述符限制已提升至 512000"
+else
+    ok "文件描述符限制已就绪"
+fi
 
 # ============================================
 # 优化 2：Hysteria2 QUIC 窗口 + masquerade 本地化
@@ -180,7 +229,30 @@ else
     ok "masquerade 已是本地文件或不存在，跳过"
 fi
 
-# 2c. 验证配置文件 YAML 格式
+# 2c. Bandwidth 暴力模式（Brutal CC）—— 对高延迟链路提升最大
+info "配置 Brutal 拥塞控制（暴力填满管道）..."
+
+if ! grep -q "^bandwidth:" "$CONFIG_FILE"; then
+    # 在 listen 行之后插入 bandwidth 配置
+    sed -i "/^listen:/a\\
+\\
+# Brutal 拥塞控制：暴力模式，高延迟链路提升最显著\\
+bandwidth:\\
+  up: 200 mbps\\
+  down: 500 mbps\\
+ignoreClientBandwidth: true" "$CONFIG_FILE"
+    ok "Brutal CC 已启用 (up 200mbps / down 500mbps)"
+else
+    ok "Bandwidth 配置已存在，跳过"
+fi
+
+# 2d. 添加 ignoreClientBandwidth（如果 bandwith 存在但没加）
+if grep -q "^bandwidth:" "$CONFIG_FILE" && ! grep -q "ignoreClientBandwidth" "$CONFIG_FILE"; then
+    sed -i "/^bandwidth:/a\\ignoreClientBandwidth: true" "$CONFIG_FILE"
+    ok "ignoreClientBandwidth 已添加"
+fi
+
+# 2e. 验证配置文件 YAML 格式
 info "验证配置文件..."
 if command -v hysteria &>/dev/null; then
     if hysteria -c "$CONFIG_FILE" check 2>/dev/null; then
@@ -220,10 +292,12 @@ echo -e "${GREEN}========================================${PLAIN}"
 echo ""
 echo -e "${YELLOW}已优化项：${PLAIN}"
 echo -e "  1. BBR 拥塞控制 + fq 队列"
-echo -e "  2. TCP Fast Open"
-echo -e "  3. 大缓冲区（高 BDP 链路优化）"
-echo -e "  4. QUIC 窗口调优（8MB/16MB）"
-echo -e "  5. masquerade 本地化（消除远程延迟）"
+echo -e "  2. TCP Fast Open + 大缓冲区 (256MB)"
+echo -e "  3. 网卡发送队列 + CPU performance 模式"
+echo -e "  4. QUIC 窗口调优（8MB/16MB 流窗口）"
+echo -e "  5. Brutal 拥塞控制（暴力模式，高延迟提升最显著）"
+echo -e "  6. masquerade 本地化（消除远程延迟）"
+echo -e "  7. 文件描述符上限 512000"
 echo ""
 echo -e "${YELLOW}Telegram 用户必读：${PLAIN}"
 echo -e "  如果 Telegram 一直转圈，请在手机端设置："
