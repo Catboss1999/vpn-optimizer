@@ -491,7 +491,11 @@ if [[ "$USE_OUTBOUND" == "y" || "$USE_OUTBOUND" == "Y" ]]; then
     info "代理地址：$OUTBOUND_ADDR"
     if [[ "$OUTBOUND_TYPE" == "http" ]]; then
         warn "注意：HTTP 代理不支持 UDP 转发，Telegram、游戏等 UDP 应用可能无法连接"
-        warn "  解决方案：Telegram 设置 → 高级 → 勾选「使用 TCP 连接」"
+        warn "  解决方案："
+        warn "    iOS: Telegram → 设置 → 数据与存储 → 代理 → 添加 SOCKS5"
+        warn "    Android: Telegram → 设置 → 数据与存储 → 代理"
+        warn "    Desktop: Settings → Advanced → Network and proxy → Use custom proxy"
+        warn "    (Telegram Desktop 3.0+ 已去掉独立的「使用 TCP」开关)"
         warn "  或联系代理服务商获取 SOCKS5 地址（支持 UDP）"
     fi
 else
@@ -669,8 +673,10 @@ fi
 echo ""
 if [[ -n "$OUTBOUND_ADDR" && "$OUTBOUND_TYPE" == "http" ]]; then
     echo -e "  ${YELLOW}Telegram 用户必读：${PLAIN}"
-    echo -e "  ${CYAN}HTTP 代理不支持 UDP，Telegram 需强制用 TCP 连接${PLAIN}"
-    echo -e "  ${CYAN}Telegram 设置 → 高级 → 勾选「使用 TCP 连接」${PLAIN}"
+    echo -e "  ${CYAN}HTTP 代理不支持 UDP，Telegram 需强制 TCP 连接${PLAIN}"
+    echo -e "  ${CYAN}iOS: 设置 → 数据与存储 → 代理 → 添加 SOCKS5${PLAIN}"
+    echo -e "  ${CYAN}Android: 设置 → 数据与存储 → 代理${PLAIN}"
+    echo -e "  ${CYAN}Desktop: Settings → Advanced → Network and proxy → Use custom proxy${PLAIN}"
     echo ""
 fi
 echo -e "${YELLOW}服务管理：${PLAIN}"
