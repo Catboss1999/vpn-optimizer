@@ -159,6 +159,18 @@ fi
 CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
 if echo "$CURRENT_CC" | grep -q "bbr"; then
     ok "BBR 已经开启"
+    # 高延迟链路优化：启用 TCP Fast Open + 扩大缓冲区
+    if ! grep -q "net.ipv4.tcp_fastopen" /etc/sysctl.conf; then
+        echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
+        sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1 || true
+    fi
+    if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
+        echo "net.core.rmem_max=134217728" >> /etc/sysctl.conf
+        echo "net.core.wmem_max=134217728" >> /etc/sysctl.conf
+        sysctl -w net.core.rmem_max=134217728 >/dev/null 2>&1 || true
+        sysctl -w net.core.wmem_max=134217728 >/dev/null 2>&1 || true
+    fi
+    info "已应用高延迟链路优化（TCP Fast Open + 大缓冲区）"
 else
     info "正在开启 BBR..."
 
@@ -191,6 +203,17 @@ else
         FINAL_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
         if echo "$FINAL_CC" | grep -q "bbr"; then
             ok "BBR 已强制开启：$FINAL_CC"
+            # 高延迟链路优化
+            if ! grep -q "net.ipv4.tcp_fastopen" /etc/sysctl.conf; then
+                echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
+            fi
+            if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
+                echo "net.core.rmem_max=134217728" >> /etc/sysctl.conf
+                echo "net.core.wmem_max=134217728" >> /etc/sysctl.conf
+            fi
+            sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1 || true
+            sysctl -w net.core.rmem_max=134217728 >/dev/null 2>&1 || true
+            sysctl -w net.core.wmem_max=134217728 >/dev/null 2>&1 || true
         else
             warn "BBR 开启失败（内核可能不支持），不影响后续 Hysteria2 的使用"
         fi
@@ -223,6 +246,16 @@ chmod 600 "$CERT_DIR/hy2_server.key"
 ok "自签证书已生成（有效期 100 年，CN=www.bing.com）"
 info "证书路径：$CERT_DIR/hy2_server.crt"
 info "密钥路径：$CERT_DIR/hy2_server.key"
+
+# 准备本地 masquerade 文件（比远程代理更快，无网络依赖）
+info "准备本地伪装页面..."
+mkdir -p /var/www/html
+cat > /var/www/html/index.html << 'MASQUERADE_HTML'
+<!DOCTYPE html>
+<html><head><title>404 Not Found</title></head>
+<body><h1>404 Not Found</h1><p>The requested URL was not found.</p></body></html>
+MASQUERADE_HTML
+ok "本地伪装页面已就绪"
 
 # ============================================================
 # 第 3 步：生成随机密码和端口
@@ -457,7 +490,9 @@ if [[ "$USE_OUTBOUND" == "y" || "$USE_OUTBOUND" == "Y" ]]; then
     info "代理类型：$OUTBOUND_TYPE"
     info "代理地址：$OUTBOUND_ADDR"
     if [[ "$OUTBOUND_TYPE" == "http" ]]; then
-        warn "注意：HTTP 代理不支持 UDP 转发，部分应用可能受影响"
+        warn "注意：HTTP 代理不支持 UDP 转发，Telegram、游戏等 UDP 应用可能无法连接"
+        warn "  解决方案：Telegram 设置 → 高级 → 勾选「使用 TCP 连接」"
+        warn "  或联系代理服务商获取 SOCKS5 地址（支持 UDP）"
     fi
 else
     info "未配置出口代理，使用 VPS IP 直连"
@@ -477,12 +512,18 @@ auth:
   type: password
   password: ${HY2_PASSWORD}
 
-# 伪装策略（当非 Hysteria2 客户端探测时返回正常网页）
+# QUIC 优化：高带宽延迟积链路（中美跨境等）
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 16777216
+  initConnReceiveWindow: 12500000
+  maxConnReceiveWindow: 25000000
+
+# 伪装策略（本地静态文件，无网络延迟）
 masquerade:
-  type: proxy
-  proxy:
-    url: https://www.bing.com
-    rewriteHost: true
+  type: file
+  file:
+    dir: /var/www/html
 
 HY2_CONFIG
 
@@ -626,6 +667,12 @@ if [[ -n "$OUTBOUND_ADDR" ]]; then
     echo -e "  ${GREEN}出口IP（目标网站看到）：$OUTBOUND_IP${PLAIN}"
 fi
 echo ""
+if [[ -n "$OUTBOUND_ADDR" && "$OUTBOUND_TYPE" == "http" ]]; then
+    echo -e "  ${YELLOW}Telegram 用户必读：${PLAIN}"
+    echo -e "  ${CYAN}HTTP 代理不支持 UDP，Telegram 需强制用 TCP 连接${PLAIN}"
+    echo -e "  ${CYAN}Telegram 设置 → 高级 → 勾选「使用 TCP 连接」${PLAIN}"
+    echo ""
+fi
 echo -e "${YELLOW}服务管理：${PLAIN}"
 echo -e "  查看状态：  ${CYAN}systemctl status hysteria-server${PLAIN}"
 echo -e "  重启服务：  ${CYAN}systemctl restart hysteria-server${PLAIN}"
