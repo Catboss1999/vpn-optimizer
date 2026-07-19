@@ -64,7 +64,7 @@ echo -e "${YELLOW}>> apt-get update${PLAIN}"
 apt-get update
 echo ""
 echo -e "${YELLOW}>> apt-get upgrade -y${PLAIN}"
-apt-get upgrade -y
+DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confold" upgrade
 echo ""
 echo -e "${YELLOW}>> apt-get install -y curl openssl ca-certificates${PLAIN}"
 apt-get install -y curl openssl ca-certificates
