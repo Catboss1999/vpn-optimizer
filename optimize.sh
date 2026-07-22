@@ -454,23 +454,11 @@ OUTBOUND_PASS=""
 if [[ "$USE_OUTBOUND" == "y" || "$USE_OUTBOUND" == "Y" ]]; then
     echo ""
     echo -e "  代理类型："
-    echo -e "    ${CYAN}1${PLAIN} = HTTP 代理（大多数静态住宅IP服务商默认提供这个）"
-    echo -e "    ${CYAN}2${PLAIN} = SOCKS5 代理"
-    read -p "请选择 [1/2]（默认 1）: " PROXY_CHOICE
+    echo -e "    ${CYAN}1${PLAIN} = SOCKS5 代理（推荐！全协议转发，Telegram/UDP 无兼容问题）"
+    echo -e "    ${CYAN}2${PLAIN} = HTTP 代理（仅 HTTP/HTTPS，部分应用可能被代理端屏蔽）"
+    read -p "请选择 [1/2]（默认 1，推荐 SOCKS5）: " PROXY_CHOICE
 
     if [[ "$PROXY_CHOICE" == "2" ]]; then
-        OUTBOUND_TYPE="socks5"
-        read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
-        while [[ -z "$OUTBOUND_ADDR" ]]; do
-            warn "代理地址不能为空"
-            read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
-        done
-        read -p "SOCKS5 用户名（无认证则留空回车）: " OUTBOUND_USER
-        if [[ -n "$OUTBOUND_USER" ]]; then
-            read -s -p "SOCKS5 密码: " OUTBOUND_PASS
-            echo ""
-        fi
-    else
         OUTBOUND_TYPE="http"
         read -p "HTTP 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
         while [[ -z "$OUTBOUND_ADDR" ]]; do
@@ -484,19 +472,29 @@ if [[ "$USE_OUTBOUND" == "y" || "$USE_OUTBOUND" == "Y" ]]; then
         done
         read -s -p "HTTP 代理密码: " OUTBOUND_PASS
         echo ""
+    else
+        OUTBOUND_TYPE="socks5"
+        read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+        while [[ -z "$OUTBOUND_ADDR" ]]; do
+            warn "代理地址不能为空"
+            read -p "SOCKS5 代理地址（格式 IP:端口）: " OUTBOUND_ADDR
+        done
+        read -p "SOCKS5 用户名（无认证则留空回车）: " OUTBOUND_USER
+        if [[ -n "$OUTBOUND_USER" ]]; then
+            read -s -p "SOCKS5 密码: " OUTBOUND_PASS
+            echo ""
+        fi
     fi
 
     ok "出口代理配置已记录"
     info "代理类型：$OUTBOUND_TYPE"
     info "代理地址：$OUTBOUND_ADDR"
     if [[ "$OUTBOUND_TYPE" == "http" ]]; then
-        warn "注意：HTTP 代理不支持 UDP 转发，Telegram、游戏等 UDP 应用可能无法连接"
-        warn "  解决方案："
+        warn "注意：HTTP 代理不支持 UDP 转发，Telegram 可能无法连接"
+        warn "  建议重新运行脚本选择 SOCKS5（推荐），或按照以下方式手动配置："
         warn "    iOS: Telegram → 设置 → 数据与存储 → 代理 → 添加 SOCKS5"
         warn "    Android: Telegram → 设置 → 数据与存储 → 代理"
         warn "    Desktop: Settings → Advanced → Network and proxy → Use custom proxy"
-        warn "    (Telegram Desktop 3.0+ 已去掉独立的「使用 TCP」开关)"
-        warn "  或联系代理服务商获取 SOCKS5 地址（支持 UDP）"
     fi
 else
     info "未配置出口代理，使用 VPS IP 直连"
@@ -672,11 +670,11 @@ if [[ -n "$OUTBOUND_ADDR" ]]; then
 fi
 echo ""
 if [[ -n "$OUTBOUND_ADDR" && "$OUTBOUND_TYPE" == "http" ]]; then
-    echo -e "  ${YELLOW}Telegram 用户必读：${PLAIN}"
-    echo -e "  ${CYAN}HTTP 代理不支持 UDP，Telegram 需强制 TCP 连接${PLAIN}"
-    echo -e "  ${CYAN}iOS: 设置 → 数据与存储 → 代理 → 添加 SOCKS5${PLAIN}"
-    echo -e "  ${CYAN}Android: 设置 → 数据与存储 → 代理${PLAIN}"
-    echo -e "  ${CYAN}Desktop: Settings → Advanced → Network and proxy → Use custom proxy${PLAIN}"
+    echo ""
+    echo -e "  ${YELLOW}Telegram 问题：${PLAIN}"
+    echo -e "  ${CYAN}HTTP 代理不支持 UDP，部分代理服务商还会屏蔽 Telegram IP${PLAIN}"
+    echo -e "  ${CYAN}建议：重新运行本脚本，选择 SOCKS5（选项 1），填相同地址即可${PLAIN}"
+    echo -e "  ${CYAN}SOCKS5 全协议转发，Telegram/UDP/游戏全部兼容，无屏蔽风险${PLAIN}"
     echo ""
 fi
 echo -e "${YELLOW}服务管理：${PLAIN}"
