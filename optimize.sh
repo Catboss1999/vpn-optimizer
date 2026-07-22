@@ -84,6 +84,93 @@ else
     error "部分依赖工具安装失败，请手动安装后重试"
     exit 1
 fi
+# ============================================================
+# HTTP -> SOCKS5 一键迁移（已有 Hysteria2 的老用户自动检测）
+# ============================================================
+if [[ -f /etc/hysteria/config.yaml ]]; then
+    if grep -q 'type: http' /etc/hysteria/config.yaml 2>/dev/null; then
+        OLD_ADDR=$(grep 'url:' /etc/hysteria/config.yaml | head -1 | sed "s/.*url: *//" | tr -d "' " | sed 's|http://||')
+        OLD_USER=$(echo "$OLD_ADDR" | cut -d@ -f1 | cut -d: -f1 2>/dev/null)
+        OLD_PASS=$(echo "$OLD_ADDR" | cut -d@ -f1 | cut -d: -f2 2>/dev/null)
+        OLD_HOST=$(echo "$OLD_ADDR" | cut -d@ -f2 2>/dev/null)
+
+        if [[ -n "$OLD_USER" && -n "$OLD_PASS" && -n "$OLD_HOST" ]]; then
+            echo ""
+            echo -e "${CYAN}========================================${PLAIN}"
+            echo -e "${CYAN}  检测到 HTTP 代理 -> 一键切换 SOCKS5${PLAIN}"
+            echo -e "${CYAN}========================================${PLAIN}"
+            echo ""
+            warn "当前使用 HTTP 代理: $OLD_HOST"
+            warn "HTTP 代理可能被服务商屏蔽 Telegram 等应用"
+            echo ""
+            info "SOCKS5 优势：全协议转发、UDP 支持、无应用屏蔽风险"
+            info "自动使用相同地址和账号密码切换为 SOCKS5，无需手动输入"
+            echo ""
+            read -p "是否立即切换到 SOCKS5？[Y/n]（默认 Y，推荐）: " MIGRATE_CHOICE
+            MIGRATE_CHOICE=${MIGRATE_CHOICE:-Y}
+
+            if [[ "$MIGRATE_CHOICE" == "Y" || "$MIGRATE_CHOICE" == "y" ]]; then
+                info "正在切换到 SOCKS5..."
+
+                LISTEN_PORT=$(grep 'listen:' /etc/hysteria/config.yaml | head -1 | sed 's/listen: *//' | tr -d "' ")
+                AUTH_PASS=$(grep 'password:' /etc/hysteria/config.yaml | head -1 | sed 's/password: *//' | tr -d "' " | xargs)
+                LISTEN_PORT=${LISTEN_PORT:-443}
+
+                cp /etc/hysteria/config.yaml /etc/hysteria/config.yaml.http.bak
+
+                cat > /etc/hysteria/config.yaml << HECONF
+listen: :$LISTEN_PORT
+
+tls:
+  cert: /root/cert/hy2_server.crt
+  key: /root/cert/hy2_server.key
+
+auth:
+  type: password
+  password: $AUTH_PASS
+
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 16777216
+  initConnReceiveWindow: 12500000
+  maxConnReceiveWindow: 25000000
+
+masquerade:
+  type: file
+  file:
+    dir: /var/www/html
+
+outbounds:
+  - name: static-ip
+    type: socks5
+    socks5:
+      addr: $OLD_HOST
+      username: $OLD_USER
+      password: $OLD_PASS
+HECONF
+
+                systemctl restart hysteria-server
+                sleep 2
+
+                if systemctl is-active --quiet hysteria-server; then
+                    ok "已切换到 SOCKS5！重新连接 VPN 试试 Telegram"
+                    echo ""
+                    info "回滚方法: cp /etc/hysteria/config.yaml.http.bak /etc/hysteria/config.yaml && systemctl restart hysteria-server"
+                else
+                    error "Hysteria 启动失败，自动回滚到 HTTP 配置"
+                    cp /etc/hysteria/config.yaml.http.bak /etc/hysteria/config.yaml
+                    systemctl restart hysteria-server
+                    warn "回滚完成，请检查代理地址端口是否正确"
+                fi
+                echo ""
+                exit 0
+            else
+                info "已跳过迁移，继续运行..."
+            fi
+        fi
+    fi
+fi
+
 
 # ============================================================
 # 第 1 步：确保内核支持 BBR（不支持则自动升级）
