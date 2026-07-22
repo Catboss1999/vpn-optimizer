@@ -112,7 +112,7 @@ if [[ -f /etc/hysteria/config.yaml ]]; then
             if [[ "$MIGRATE_CHOICE" == "Y" || "$MIGRATE_CHOICE" == "y" ]]; then
                 info "正在切换到 SOCKS5..."
 
-                LISTEN_PORT=$(grep 'listen:' /etc/hysteria/config.yaml | head -1 | sed 's/listen: *//' | tr -d "' ")
+                LISTEN_PORT=$(grep 'listen:' /etc/hysteria/config.yaml | head -1 | sed 's/listen: *//' | tr -d "' " | sed 's/^://')
                 AUTH_PASS=$(grep 'password:' /etc/hysteria/config.yaml | head -1 | sed 's/password: *//' | tr -d "' " | xargs)
                 LISTEN_PORT=${LISTEN_PORT:-443}
 
